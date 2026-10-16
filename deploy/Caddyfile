@@ -1,0 +1,10 @@
+:8080 {
+    root * /var/www/ai-company/docs
+    file_server
+    encode gzip
+
+    # Opsional: Aktifkan Basic Auth agar hanya CTO yang bisa mengakses portal
+    # basicauth /* {
+    #     cto $2a$14$ContohHashBcryptPasswordElu
+    # }
+}

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pak-dir"
+version = "1.0.0"
+description = "Autonomous AI Engineering Organization & CTO Control Plane for Solo Founders"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "PakDir Core Team" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "discord.py>=2.3.2",
+    "aiohttp>=3.9.0",
+    "python-dotenv>=1.0.1",
+    "psutil>=5.9.8"
+]
+
+[project.urls]
+Homepage = "https://github.com/your-username/pak-dir"
+Documentation = "https://github.com/your-username/pak-dir#readme"
+Repository = "https://github.com/your-username/pak-dir.git"
+
+[project.scripts]
+pakdir-cli = "orchestrator.cli:main"
+pakdir-factory = "orchestrator.agent_factory:main"
+pakdir-bot = "orchestrator.discord_bot:run_discord_bot"

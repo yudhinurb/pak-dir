@@ -1,0 +1,16 @@
+[Unit]
+Description=PakDir AI Engineering Control Plane & Supervisor
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/ai-company
+EnvironmentFile=/var/www/ai-company/.env
+ExecStart=/var/www/ai-company/.venv/bin/python -m orchestrator.discord_bot
+Restart=always
+RestartSec=5
+# Resident memory cap ensuring the control plane leaves ample room for applications
+MemoryMax=250M
+
+[Install]
+WantedBy=multi-user.target

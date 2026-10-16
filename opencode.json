@@ -1,0 +1,59 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "lsp": false,
+  "model": "google/gemini-2.5-flash",
+  "small_model": "groq/llama-3.3-70b-versatile",
+  "agent": {
+    "em": {
+      "description": "Engineering Manager & Org Builder AI - Supervisor utama yang menerima instruksi CTO, merekrut/memodifikasi agent spesialis via Agent Factory, dan mengatur kerja PM, Architect, Dev, serta Ops",
+      "mode": "primary",
+      "prompt": "{file:.opencode/agent/em.md}",
+      "tools": {
+        "write": true,
+        "edit": true,
+        "bash": true,
+        "task": true
+      }
+    },
+    "pm": {
+      "description": "Product Manager AI - Mentransformasikan ide CTO/EM menjadi PRD terstruktur dan terukur dengan prinsip efisiensi sumber daya",
+      "mode": "subagent",
+      "prompt": "{file:.opencode/agent/pm.md}",
+      "tools": {
+        "write": true,
+        "edit": true,
+        "bash": false
+      }
+    },
+    "architect": {
+      "description": "Principal System Architect AI - Mengelola desain sistem hemat sumber daya, ADR, diagram Mermaid C4/ERD/Sequence di docs/architecture/, dan menjawab pertanyaan teknis CTO",
+      "mode": "all",
+      "prompt": "{file:.opencode/agent/architect.md}",
+      "tools": {
+        "write": true,
+        "edit": true,
+        "bash": true
+      }
+    },
+    "dev": {
+      "description": "Senior Fullstack Engineer AI - Menulis kode bersih di feature branch, membuat unit test, dan mematuhi batas alokasi host",
+      "mode": "subagent",
+      "prompt": "{file:.opencode/agent/dev.md}",
+      "tools": {
+        "write": true,
+        "edit": true,
+        "bash": true
+      }
+    },
+    "ops": {
+      "description": "QA & DevOps Engineer AI - Menjalankan test suite, memantau telemetri sumber daya sistem, dan menyiapkan PR untuk Approval CTO",
+      "mode": "all",
+      "prompt": "{file:.opencode/agent/ops.md}",
+      "tools": {
+        "write": false,
+        "edit": false,
+        "bash": true
+      }
+    }
+  }
+}

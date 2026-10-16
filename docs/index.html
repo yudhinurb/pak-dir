@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>CTO Live Architecture & AI Org Portal</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+  <meta name="description" content="Live Architecture & Dynamic AI Organization Portal - Ubuntu 2GB RAM Edition">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
+  <style>
+    :root {
+      --theme-color: #2563eb;
+    }
+    .sidebar {
+      background-color: #f8fafc;
+    }
+    .markdown-section pre > code {
+      font-size: 0.9rem;
+    }
+    .mermaid {
+      background: #ffffff;
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+      margin: 16px 0;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">Memuat Peta Arsitektur CTO...</div>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "default", securityLevel: "loose" });
+    window.mermaid = mermaid;
+  </script>
+  <script>
+    window.$docsify = {
+      name: "🏢 CTO Architecture Portal",
+      repo: "",
+      loadSidebar: true,
+      subMaxLevel: 2,
+      auto2top: true,
+      markdown: {
+        renderer: {
+          code: function(code, lang) {
+            if (lang === "mermaid") {
+              return '<div class="mermaid">' + code + '</div>';
+            }
+            return this.origin.code.apply(this, arguments);
+          }
+        }
+      },
+      plugins: [
+        function(hook) {
+          hook.doneEach(function() {
+            if (window.mermaid) {
+              window.mermaid.run({ querySelector: ".mermaid" });
+            }
+          });
+        }
+      ]
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
+</body>
+</html>
