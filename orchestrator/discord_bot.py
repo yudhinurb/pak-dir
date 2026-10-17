@@ -159,7 +159,7 @@ def run_discord_bot() -> None:
 
     @bot.event
     async def on_ready() -> None:
-        print(f"[CTO Orchestrator] Online sebagai {bot.user} | Siap melayani CTO!")
+        print(f"[CTO Orchestrator] Online sebagai {bot.user} | Siap melayani CTO!", flush=True)
 
     @bot.command(name="health")
     async def cmd_health(ctx: Any) -> None:
@@ -172,13 +172,13 @@ def run_discord_bot() -> None:
     @bot.command(name="ask")
     async def cmd_ask(ctx: Any, agent_name: str, *, question: str) -> None:
         clean_agent = agent_name.lstrip("@").lower()
-        print(f"[Discord] Diterima perintah: !ask @{clean_agent} '{question}'")
+        print(f"[Discord] Diterima perintah: !ask @{clean_agent} '{question}'", flush=True)
         await ctx.send(f"🔍 Menghubungi `@{clean_agent}`...")
         try:
             reply = await asyncio.to_thread(handler.handle_ask, clean_agent, question)
             await ctx.send(reply[:1950])
         except Exception as exc:
-            print(f"[Discord Error] {exc}")
+            print(f"[Discord Error] {exc}", flush=True)
             await ctx.send(f"⚠️ Terjadi kendala saat memanggil `@{clean_agent}`:\n```{exc}```")
 
     @bot.command(name="hire")

@@ -14,15 +14,18 @@ from orchestrator.state_db import StateDB
 # Universal high-speed free models supported across all free tiers
 FREE_MODEL_POOLS: Dict[str, List[str]] = {
     "reasoning": [
+        "google/gemini-3.5-flash-lite",
+        "google/gemini-2.5-flash",
         "google/gemini-2.0-flash",
         "google/gemini-1.5-flash",
         "groq/llama-3.3-70b-versatile",
         "google/gemini-1.5-pro",
-        "google/gemini-2.5-flash",
         "openrouter/deepseek/deepseek-r1:free",
         "cerebras/llama-3.3-70b",
     ],
     "coding": [
+        "google/gemini-3.5-flash-lite",
+        "google/gemini-2.5-flash",
         "google/gemini-2.0-flash",
         "google/gemini-1.5-flash",
         "groq/llama-3.3-70b-versatile",
@@ -70,6 +73,69 @@ def _load_agent_system_prompt(agent_name: str) -> str:
     )
 
 
+def _call_gemini_endpoint(model_name: str, system_prompt: str, prompt: str, api_key: str) -> Tuple[int, str]:
+    # 1. Coba endpoint resmi OpenAI-compatible dari Google
+    url_openai = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    payload_openai = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    try:
+        req = urllib.request.Request(
+            url_openai,
+            data=json.dumps(payload_openai).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            choices = data.get("choices", [])
+            if choices and choices[0].get("message", {}).get("content"):
+                return 0, choices[0]["message"]["content"]
+    except urllib.error.HTTPError as e:
+        err_openai = e.read().decode("utf-8", errors="ignore")
+        if e.code == 429:
+            return 429, f"Gemini 429 Rate Limit: {err_openai}"
+        # Jika bukan 429, coba metode generateContent di bawah
+    except Exception:
+        pass
+
+    # 2. Coba endpoint native generateContent
+    url_native = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+    payload_native = {
+        "contents": [
+            {"role": "user", "parts": [{"text": f"SYSTEM INSTRUCTIONS:\n{system_prompt}\n\nUSER PROMPT:\n{prompt}"}]}
+        ]
+    }
+    try:
+        req = urllib.request.Request(
+            url_native,
+            data=json.dumps(payload_native).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts and parts[0].get("text"):
+                    return 0, parts[0]["text"]
+    except urllib.error.HTTPError as e:
+        err_native = e.read().decode("utf-8", errors="ignore")
+        return e.code, f"Gemini HTTP {e.code} ({model_name}): {err_native}"
+    except Exception as e:
+        return 1, f"Gemini Error ({model_name}): {e}"
+
+    return 1, f"Model {model_name} tidak mengembalikan respons."
+
+
 def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, str]:
     """
     Eksekutor API langsung (Direct Native LLM Caller) untuk Gemini, Groq, Cerebras,
@@ -77,53 +143,29 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
     """
     system_prompt = _load_agent_system_prompt(agent_name)
 
-    # 1. Google Gemini (Google AI Studio via OpenAI-compatible endpoint)
+    # 1. Google Gemini (Google AI Studio)
     if "google" in model or "gemini" in model:
         api_key = _clean_key(os.getenv("GEMINI_API_KEY"))
         if not api_key:
             return 1, "⚠️ GEMINI_API_KEY belum diisi di file .env."
 
-        raw_model = model.split("/")[-1]
+        env_model = _clean_key(os.getenv("GEMINI_MODEL"))
+        raw_model = env_model or model.split("/")[-1]
+
         models_to_try = [raw_model]
-        for fallback in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+        for fallback in ("gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
             if fallback not in models_to_try:
                 models_to_try.append(fallback)
 
-        url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         last_gemini_err = ""
         for m_name in models_to_try:
-            payload = {
-                "model": m_name,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            }
-            try:
-                req = urllib.request.Request(
-                    url,
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {api_key}",
-                    },
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=45) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    choices = data.get("choices", [])
-                    if choices:
-                        return 0, choices[0]["message"]["content"]
-                    last_gemini_err = "Gemini tidak mengembalikan teks output."
-            except urllib.error.HTTPError as e:
-                err_body = e.read().decode("utf-8", errors="ignore")
-                last_gemini_err = f"Gemini HTTP {e.code} ({m_name}): {err_body}"
-                print(f"[LLM Router] {last_gemini_err}")
-                if e.code == 429:
-                    return 429, last_gemini_err
-            except Exception as e:
-                last_gemini_err = f"Error koneksi Gemini ({m_name}): {e}"
-                print(f"[LLM Router] {last_gemini_err}")
+            code, out = _call_gemini_endpoint(m_name, system_prompt, prompt, api_key)
+            if code == 0:
+                return 0, out
+            last_gemini_err = out
+            print(f"[LLM Router] Gemini {m_name} gagal: {out[:120]}", flush=True)
+            if code == 429:
+                return 429, out
 
         return 1, last_gemini_err
 
