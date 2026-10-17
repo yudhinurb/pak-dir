@@ -23,7 +23,7 @@
 Unlike traditional multi-agent systems that demand heavy GPU infrastructure or consume gigabytes of idle resident memory, PakDir is engineered with **Resource-Aware Architecture**:
 - **Minimal Control Plane Footprint:** The entire management layer operates under **250MB resident memory**, leaving the vast majority of host resources for your actual application workloads.
 - **Environment Agnostic:** Runs identically across local developer environments (macOS, Linux, Windows), entry-level cloud VPS instances (tested on 2GB RAM + 4GB Swap), dedicated bare-metal, and containerized clusters.
-- **Zero-Downtime Multi-Provider LLM Routing:** Prioritized by default on **Google Gemini 3.5 Flash-Lite** with seamless cascade failover across Google AI Studio, Groq, Cerebras, Mistral Codestral, and OpenRouter free tiers.
+- **Zero-Downtime Multi-Provider LLM Routing:** Prioritized by default on **Google Gemini 2.5 Flash** with seamless cascade failover across Google AI Studio, Groq, Cerebras, Mistral Codestral, and OpenRouter free tiers.
 - **Strict Human-in-the-Loop Governance:** AI agents operate on isolated feature branches and cannot deploy to production without explicit CTO authorization.
 - **Live Host Telemetry & Anti-Laziness Protocol:** Agents receive real-time host inspection snapshots (ports, firewall, services, git) and are strictly forbidden from telling the CTO to run manual terminal commands.
 - **Native Document & File Ingestion:** Upload `.pdf` documents, source code, SQL schemas, or error logs directly through Discord chat for immediate analysis.
@@ -33,7 +33,7 @@ Unlike traditional multi-agent systems that demand heavy GPU infrastructure or c
 flowchart LR
     CTO["👨‍💻 CTO (Executive)\nDiscord Mobile/Desktop & Hardened Web Portal"]
     PakDir["🖥️ PakDir Control Plane (<250MB Footprint)\nEM Supervisor + Dynamic Factory + State DB + File Processor"]
-    LLMPool["🧠 Multi-Provider Inference Pool\nGemini 3.5 Flash-Lite + Groq + Cerebras + Codestral + OpenRouter"]
+    LLMPool["🧠 Multi-Provider Inference Pool\nGemini 2.5 Flash + Groq + Cerebras + Codestral + OpenRouter"]
     Output["🌐 Enterprise Deliverables\nHardened Docsify C4 Portal & GitHub Pull Requests"]
 
     CTO <-->|"Directives, File Attachments & Approval Gate"| PakDir
@@ -54,9 +54,9 @@ Interact with a single, accountable executive interface: the **Engineering Manag
 
 ### 2. 🧠 Multi-Provider Free Inference Router
 PakDir eliminates provider lock-in and eliminates quota downtime through intelligent, priority-weighted failover:
-- **Default Primary Model:** `google/gemini-3.5-flash-lite` via dual-endpoint architecture (OpenAI-compatible `/v1beta/openai/chat/completions` + native `generateContent` fallback).
-- **Reasoning Tier (`@em`, `@architect`, `@pm`):** Gemini 3.5 Flash-Lite $\rightarrow$ Gemini 2.5 Flash-Lite $\rightarrow$ Gemini 2.5 Flash $\rightarrow$ Gemini 2.0 Flash $\rightarrow$ Groq Llama 3.3 70B $\rightarrow$ Cerebras Llama 3.3 70B $\rightarrow$ OpenRouter DeepSeek R1 (`:free`).
-- **Coding Tier (`@dev`, `@ops`):** Gemini 3.5 Flash-Lite $\rightarrow$ Groq Llama 3.3 70B $\rightarrow$ Mistral Codestral $\rightarrow$ OpenRouter Qwen 2.5 Coder (`:free`) $\rightarrow$ Cerebras Llama 3.3 70B.
+- **Default Primary Model:** `google/gemini-2.5-flash` via dual-endpoint architecture (OpenAI-compatible `/v1beta/openai/chat/completions` + native `generateContent` fallback).
+- **Reasoning Tier (`@em`, `@architect`, `@pm`):** Gemini 2.5 Flash $\rightarrow$ Gemini 2.0 Flash $\rightarrow$ Gemini 1.5 Flash $\rightarrow$ Groq Llama 3.3 70B $\rightarrow$ Cerebras Llama 3.3 70B $\rightarrow$ OpenRouter DeepSeek R1 (`:free`).
+- **Coding Tier (`@dev`, `@ops`):** Gemini 2.5 Flash $\rightarrow$ Groq Llama 3.3 70B $\rightarrow$ Mistral Codestral $\rightarrow$ OpenRouter Qwen 2.5 Coder (`:free`) $\rightarrow$ Cerebras Llama 3.3 70B.
 - Automatically handles HTTP `429 Too Many Requests` by rotating to adjacent endpoints within milliseconds.
 - Real-time unbuffered log streaming (`flush=True`) for instant `journalctl` visibility.
 

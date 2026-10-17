@@ -14,23 +14,22 @@ from orchestrator.state_db import StateDB
 # Universal high-speed free models supported across all free tiers
 FREE_MODEL_POOLS: Dict[str, List[str]] = {
     "reasoning": [
-        "google/gemini-3.5-flash-lite",
         "google/gemini-2.5-flash",
         "google/gemini-2.0-flash",
         "google/gemini-1.5-flash",
-        "groq/llama-3.3-70b-versatile",
+        "google/gemini-2.5-pro",
         "google/gemini-1.5-pro",
+        "groq/llama-3.3-70b-versatile",
         "openrouter/deepseek/deepseek-r1:free",
         "cerebras/llama-3.3-70b",
     ],
     "coding": [
-        "google/gemini-3.5-flash-lite",
         "google/gemini-2.5-flash",
         "google/gemini-2.0-flash",
         "google/gemini-1.5-flash",
         "groq/llama-3.3-70b-versatile",
         "mistral/codestral-latest",
-        "openrouter/qwen/qwen3-coder:free",
+        "openrouter/qwen/qwen-2.5-coder-32b-instruct:free",
         "cerebras/llama-3.3-70b",
     ],
 }
@@ -102,7 +101,7 @@ def _call_gemini_endpoint(model_name: str, system_prompt: str, prompt: str, api_
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": 4096,
+        "max_tokens": 8192,
     }
     try:
         req = urllib.request.Request(
@@ -134,7 +133,7 @@ def _call_gemini_endpoint(model_name: str, system_prompt: str, prompt: str, api_
             {"role": "user", "parts": [{"text": f"SYSTEM INSTRUCTIONS:\n{system_prompt}\n\nUSER PROMPT:\n{prompt}"}]}
         ],
         "generationConfig": {
-            "maxOutputTokens": 4096,
+            "maxOutputTokens": 8192,
         },
     }
     try:
@@ -177,7 +176,7 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
         raw_model = env_model or model.split("/")[-1]
 
         models_to_try = [raw_model]
-        for fallback in ("gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+        for fallback in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro"):
             if fallback not in models_to_try:
                 models_to_try.append(fallback)
 

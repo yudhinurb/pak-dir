@@ -270,6 +270,82 @@ class TestAITechCompanyOrchestrator(unittest.TestCase):
         log_out = subprocess.run(["git", "log", "-1", "--oneline"], cwd=str(self.temp_dir), capture_output=True, text=True).stdout
         self.assertIn("deploy: merge task #", log_out)
 
+    def test_08_real_code_extraction_qa_and_conflict_handling(self) -> None:
+        import subprocess
+
+        # 1. Inisialisasi repo git di temp_dir
+        subprocess.run(["git", "init"], cwd=str(self.temp_dir), capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.temp_dir), capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.temp_dir), capture_output=True, check=True)
+
+        (self.temp_dir / "README.md").write_text("# Initial Repo", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=str(self.temp_dir), capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=str(self.temp_dir), capture_output=True, check=True)
+        subprocess.run(["git", "branch", "-M", "main"], cwd=str(self.temp_dir), capture_output=True, check=True)
+
+        # 2. Definisikan runner di mana @dev menghasilkan berkas kode nyata
+        def dev_code_runner(agent_name: str, model: str, prompt: str) -> Tuple[int, str]:
+            if agent_name == "dev":
+                return 0, (
+                    "Berikut adalah implementasi modul kalkulator:\n\n"
+                    "### File: src/calc.py\n"
+                    "```python\n"
+                    "def multiply(a, b):\n"
+                    "    return a * b\n"
+                    "```\n\n"
+                    "### File: tests/test_calc.py\n"
+                    "```python\n"
+                    "import unittest\n"
+                    "from src.calc import multiply\n\n"
+                    "class TestCalc(unittest.TestCase):\n"
+                    "    def test_mul(self):\n"
+                    "        self.assertEqual(multiply(3, 4), 12)\n"
+                    "```\n"
+                )
+            if agent_name == "ops":
+                return 0, "Semua unit test otomatis lulus verifikasi."
+            return 0, f"[{agent_name}] selesai"
+
+        router = FreeLLMRouter(state_db=self.state_db, runner=dev_code_runner)
+        supervisor = EMSupervisor(
+            root_dir=self.temp_dir,
+            state_db=self.state_db,
+            router=router,
+            factory=self.factory,
+            max_retries=2,
+        )
+
+        task = supervisor.execute_cto_mandate("Buat modul multiply dan unit testnya")
+        self.assertEqual(task["status"], "WAITING_CTO_APPROVAL")
+
+        # Verifikasi berkas kode dan test ter-commit pada feature branch
+        code_c, out_c = supervisor._run_git(["show", f"{task['branch_name']}:src/calc.py"])
+        self.assertEqual(code_c, 0, "Berkas src/calc.py harus berhasil di-commit pada branch task")
+        self.assertIn("multiply", out_c)
+
+        code_t, out_t = supervisor._run_git(["show", f"{task['branch_name']}:tests/test_calc.py"])
+        self.assertEqual(code_t, 0, "Berkas tests/test_calc.py harus berhasil di-commit pada branch task")
+        self.assertIn("TestCalc", out_t)
+
+        # 3. Uji penanganan konflik merge (Git Conflict Abort)
+        # Buat perubahan berlawanan di branch main pada file yang sama
+        calc_py = self.temp_dir / "src" / "calc.py"
+        calc_py.parent.mkdir(parents=True, exist_ok=True)
+        calc_py.write_text("def multiply(a, b):\n    return 'CONFLICT'\n", encoding="utf-8")
+        subprocess.run(["git", "add", "src/calc.py"], cwd=str(self.temp_dir), capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", "conflicting commit on main"], cwd=str(self.temp_dir), capture_output=True, check=True)
+
+        # Coba approve -> harus raise RuntimeError dan abort merge
+        with self.assertRaises(RuntimeError) as ctx:
+            supervisor.approve_task(task["id"], "Approve with expected conflict")
+
+        self.assertIn("konflik", str(ctx.exception).lower())
+
+        # Pastikan git status bersih dan tidak terkunci di MERGING
+        status_out = subprocess.run(["git", "status"], cwd=str(self.temp_dir), capture_output=True, text=True).stdout
+        self.assertNotIn("You have unmerged paths", status_out)
+        self.assertNotIn("MERGING", status_out)
+
 
 if __name__ == "__main__":
     unittest.main()

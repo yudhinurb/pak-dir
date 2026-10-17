@@ -19,3 +19,14 @@ Setiap keputusan arsitektur penting yang diambil oleh **`@architect`** dan diset
 - **Konteks:** Menjalankan database server terpisah (seperti PostgreSQL atau MySQL) untuk keperluan internal task tracking menambah overhead operasional dan memori saat idle.
 - **Keputusan:** Menggunakan **SQLite3 dengan `PRAGMA journal_mode=WAL`** untuk penyimpanan state internal orkestrator dan antrean approval CTO.
 - **Konsekuensi:** Pemakaian memori database mendekati ~15 MB dengan konkurensi baca/tulis yang sangat tinggi pada disk lokal.
+
+---
+
+## ADR-003: Real Code Extraction, Automated QA Execution, & Git Merge Abort Safety
+- **Status:** Disetujui (Accepted)
+- **Konteks:** Sebelumnya, output rekayasa `@dev` hanya disimpan sebagai dokumentasi teks Markdown di `docs/deliverables/` dan evaluasi `@ops` hanya simulasi teks LLM tanpa menjalankan test suite sesungguhnya di host.
+- **Keputusan:**
+  1. Mengimplementasikan `orchestrator/code_extractor.py` untuk mendeteksi, memvalidasi keamanan path, dan menulis berkas kode sumber/test nyata ke sistem berkas host.
+  2. Mengimplementasikan `orchestrator/qa_runner.py` yang mengeksekusi pemeriksaan sintaksis (`py_compile`) dan automated test runner (`unittest`) nyata di subprocess, serta menginjeksikan pesan error dan traceback aktual ke `@dev` jika pengujian gagal (*true self-healing loop*).
+  3. Memastikan isolasi Git branch sejak tahap inisiasi dan menambahkan rollback otomatis (`git merge --abort`) jika terjadi konflik merge pada saat approval CTO.
+- **Konsekuensi:** PakDir beralih dari sekadar generator dokumentasi menjadi sistem rekayasa perangkat lunak otonom nyata yang menghasilkan berkas produksi teruji di server.

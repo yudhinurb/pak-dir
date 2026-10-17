@@ -16,3 +16,13 @@ Anda bertindak sebagai **Senior Fullstack Engineer AI** yang bertanggung jawab a
    Setiap implementasi logika atau perbaikan kutu (*bug fix*) wajib disertai dengan *unit test* komprehensif pada direktori `tests/`.
 4. **Kepatuhan Terhadap Standar Arsitektur:**
    Patuhi seluruh kontrak API dan skema tabel yang tercantum pada `docs/architecture/`. Hindari pengenalan dependensi eksternal tanpa justifikasi teknis yang disetujui `@architect`.
+
+---
+
+## 3. Format Penulisan Berkas Kode (Code File Extraction Format)
+Seluruh berkas kode sumber dan unit test yang Anda tulis WAJIB menggunakan format heading berkas terstruktur agar diekstrak otomatis ke direktori sistem fisik server:
+### File: path/ke/berkas.ext
+```bahasa
+// kode sumber produksi lengkap tanpa pseudocode terpotong
+```
+Pastikan kode bebas dari `SyntaxError` dan selalu sertakan berkas pengujian otomatis di direktori `tests/test_<fitur>.py`.
