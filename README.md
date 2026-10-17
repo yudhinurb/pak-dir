@@ -22,21 +22,24 @@
 
 Unlike traditional multi-agent systems that demand heavy GPU infrastructure or consume gigabytes of idle resident memory, PakDir is engineered with **Resource-Aware Architecture**:
 - **Minimal Control Plane Footprint:** The entire management layer operates under **250MB resident memory**, leaving the vast majority of host resources for your actual application workloads.
-- **Environment Agnostic:** Runs identically across local developer environments (macOS, Linux, Windows), entry-level cloud VPS instances, dedicated bare-metal, and containerized clusters.
-- **Zero-Downtime Multi-Provider LLM Routing:** Built-in automatic failover across free and open-weight model endpoints prevents workflow interruption during rate limits.
+- **Environment Agnostic:** Runs identically across local developer environments (macOS, Linux, Windows), entry-level cloud VPS instances (tested on 2GB RAM + 4GB Swap), dedicated bare-metal, and containerized clusters.
+- **Zero-Downtime Multi-Provider LLM Routing:** Prioritized by default on **Google Gemini 3.5 Flash-Lite** with seamless cascade failover across Google AI Studio, Groq, Cerebras, Mistral Codestral, and OpenRouter free tiers.
 - **Strict Human-in-the-Loop Governance:** AI agents operate on isolated feature branches and cannot deploy to production without explicit CTO authorization.
+- **Live Host Telemetry & Anti-Laziness Protocol:** Agents receive real-time host inspection snapshots (ports, firewall, services, git) and are strictly forbidden from telling the CTO to run manual terminal commands.
+- **Native Document & File Ingestion:** Upload `.pdf` documents, source code, SQL schemas, or error logs directly through Discord chat for immediate analysis.
+- **Hardened Security & Gated Architecture Portal:** Built-in Bcrypt authentication and security headers protect your architectural blueprints from public scraping.
 
 ```mermaid
 flowchart LR
-    CTO["👨‍💻 CTO (Executive)\nDiscord Control & Live Web Portal"]
-    PakDir["🖥️ PakDir Control Plane (<250MB Footprint)\nEM Supervisor + Dynamic Factory + State DB"]
-    LLMPool["🧠 Multi-Provider Inference Pool\nGemini + Groq + Cerebras + Codestral + OpenRouter"]
-    Output["🌐 Enterprise Deliverables\nLive Docsify C4 Portal & GitHub Pull Requests"]
+    CTO["👨‍💻 CTO (Executive)\nDiscord Mobile/Desktop & Hardened Web Portal"]
+    PakDir["🖥️ PakDir Control Plane (<250MB Footprint)\nEM Supervisor + Dynamic Factory + State DB + File Processor"]
+    LLMPool["🧠 Multi-Provider Inference Pool\nGemini 3.5 Flash-Lite + Groq + Cerebras + Codestral + OpenRouter"]
+    Output["🌐 Enterprise Deliverables\nHardened Docsify C4 Portal & GitHub Pull Requests"]
 
-    CTO <-->|"Directives & Approval Gate"| PakDir
+    CTO <-->|"Directives, File Attachments & Approval Gate"| PakDir
     PakDir <-->|"Zero-Downtime Rate-Limit Failover"| LLMPool
     PakDir -->|"Sync Architecture & Deploy"| Output
-    Output -.->|"Real-Time Visual Monitoring"| CTO
+    Output -.->|"Bcrypt Gated Visual Monitoring"| CTO
 ```
 
 ---
@@ -51,18 +54,39 @@ Interact with a single, accountable executive interface: the **Engineering Manag
 
 ### 2. 🧠 Multi-Provider Free Inference Router
 PakDir eliminates provider lock-in and eliminates quota downtime through intelligent, priority-weighted failover:
-- **Reasoning Tier (`@em`, `@architect`, `@pm`):** Google Gemini 2.5 Pro $\rightarrow$ OpenRouter DeepSeek R1 (`:free`) $\rightarrow$ Groq Llama 3.3 70B $\rightarrow$ Cerebras Llama 3.3 70B.
-- **Coding Tier (`@dev`, `@ops`):** Mistral Codestral $\rightarrow$ OpenRouter Qwen 2.5 Coder (`:free`) $\rightarrow$ Gemini 2.5 Flash $\rightarrow$ Groq Llama 3.3 70B.
+- **Default Primary Model:** `google/gemini-3.5-flash-lite` via dual-endpoint architecture (OpenAI-compatible `/v1beta/openai/chat/completions` + native `generateContent` fallback).
+- **Reasoning Tier (`@em`, `@architect`, `@pm`):** Gemini 3.5 Flash-Lite $\rightarrow$ Gemini 2.5 Flash-Lite $\rightarrow$ Gemini 2.5 Flash $\rightarrow$ Gemini 2.0 Flash $\rightarrow$ Groq Llama 3.3 70B $\rightarrow$ Cerebras Llama 3.3 70B $\rightarrow$ OpenRouter DeepSeek R1 (`:free`).
+- **Coding Tier (`@dev`, `@ops`):** Gemini 3.5 Flash-Lite $\rightarrow$ Groq Llama 3.3 70B $\rightarrow$ Mistral Codestral $\rightarrow$ OpenRouter Qwen 2.5 Coder (`:free`) $\rightarrow$ Cerebras Llama 3.3 70B.
 - Automatically handles HTTP `429 Too Many Requests` by rotating to adjacent endpoints within milliseconds.
+- Real-time unbuffered log streaming (`flush=True`) for instant `journalctl` visibility.
 
-### 3. 🛡️ Executive Approval Gate (Human-in-the-Loop)
+### 3. 🛡️ Anti-Laziness Protocol & Live Telemetry Context
+Agents are equipped with real-time host inspection snapshots ([`orchestrator/system_context.py`](file:///e:/Dev/pak-dir/orchestrator/system_context.py)):
+- **Real-Time Data Injected:** Open listening ports (`ss -tuln`), UFW firewall status, running core services (`caddy`, `pakdir-orchestrator`, `ssh`), and Git repository branch/commit.
+- **Uncompromising Directive:** Agents are strictly forbidden from acting like generic chatbots that give homework to the CTO (e.g., *"Silakan Anda jalankan netstat di terminal"*). Agents must directly analyze and report factual system states.
+
+### 4. 📎 Native Document & Code Attachment Ingestion
+Send files directly through Discord chat for immediate processing ([`orchestrator/file_processor.py`](file:///e:/Dev/pak-dir/orchestrator/file_processor.py)):
+- **Supported Formats:**
+  - **Documents:** `.pdf` (digital PDF extraction via lightweight `pypdf`, memory overhead < 15 MB).
+  - **Code & Text:** `.txt`, `.md`, `.py`, `.json`, `.yaml`, `.yml`, `.sql`, `.csv`, `.log`, `.sh`, `.html`, `.css`, `.toml`, `.go`, `.rs`.
+- **Automatic Archival:** Stored safely with timestamp prefixes in `data/uploads/`.
+- **Integration:** Supported across both `!ask <@agent>` (for reviews and analysis) and `!task` (for PRD-driven sprints).
+
+### 5. 🔒 Hardened Architecture Portal & Defense-in-Depth
+Protect your architectural blueprints, ERDs, and PRDs from public scraping on Port 8080:
+- **Caddyfile Hardening:** Restricts methods to `GET`/`HEAD` (405 for others), blocks all sensitive file patterns (`.env`, `.db`, `.sh`, `.py`, `.git`, `data/*` return 404), and sets modern security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`).
+- **HTTP Basic Authentication (Bcrypt):** Powered by [`deploy/set-portal-auth.py`](file:///e:/Dev/pak-dir/deploy/set-portal-auth.py) with automated sudo fallback. All unauthorized requests receive `401 Unauthorized` with 0 bytes.
+- **Zero-Trust Loopback Mode:** Easily toggle Caddy between public binding (`:8080`) and local stealth mode (`127.0.0.1:8080` via SSH tunneling).
+- **Discord Security Audit:** Run `!security` to get an instant executive posture audit directly in Discord.
+
+### 6. 🛡️ Executive Approval Gate (Human-in-the-Loop)
 Agents are strictly sandboxed to feature branches (`feat/*`). Pull Requests enter a persistent `WAITING_CTO_APPROVAL` queue in the SQLite state store. Only after the CTO issues `!approve <task_id>` will `@ops` merge to `main` and execute release deployment.
 
-### 4. 📊 Real-Time Architecture & Live Org-Chart Portal
-PakDir features a zero-compilation documentation engine powered by **Docsify + Mermaid.js v11**:
-- **Dynamic Organizational Hierarchy:** Automatically synchronizes as specialized subagents are hired or retired.
-- **C4 System Context & Container Models:** Visual diagrams maintained continuously by `@architect`.
-- **Database ERD & Architecture Decision Records (ADR):** Traceable historical log of technical decisions.
+### 7. 💬 Discord Message Auto-Chunking & Markdown Repair
+Never lose output text due to Discord's 2,000 character limit:
+- Smart pagination automatically splits long responses into clean sequential parts (`(Bagian 1/2)`, `(Lanjutan 2/2)`).
+- Markdown code block fence repair: ensures unclosed ```` ``` ```` fences are cleanly closed in part 1 and reopened in part 2 so syntax highlighting never breaks.
 
 ---
 
@@ -73,9 +97,10 @@ PakDir decouples the orchestration control plane from the host capacity:
 | Layer | Component | Memory Overhead | Description |
 | :--- | :--- | :--- | :--- |
 | **Control Plane** | Python Daemon (`asyncio`) | ~60 MB | Discord event bridge & supervisory state engine |
-| **Agent Runtime** | OpenCode Engine | ~120 MB | Headless task execution (`lsp: false` on-demand) |
+| **Agent Runtime** | OpenCode Engine / Direct LLM | ~120 MB | Headless task execution (`lsp: false` on-demand) |
+| **File Processor** | Pure-Python `pypdf` + Text | < 15 MB | Ephemeral document parsing and extraction |
 | **State Storage** | SQLite3 (`WAL Mode`) | ~15 MB | Task tracking, audit trail, approval queue |
-| **Architecture Portal** | Caddy v2 + Docsify | ~15 MB | Reverse proxy & static visual documentation |
+| **Architecture Portal** | Caddy v2 + Docsify | ~15 MB | Hardened reverse proxy & static visual documentation |
 | **Host Workload** | **User Applications** | **Remaining Host RAM** | **Full allocation for runtimes, databases & tests** |
 
 > 💡 **Deploying on Constrained Hardware?**  
@@ -90,45 +115,48 @@ PakDir decouples the orchestration control plane from the host capacity:
 ```bash
 git clone https://github.com/your-username/pak-dir.git
 cd pak-dir
-pip install -e .
+
+# Set up virtual environment
+python3 -m venv .venv
+source .venv/bin/activate    # On Windows: .venv\Scripts\activate
+pip install -r orchestrator/requirements.txt
 ```
 
-### 2. Verify System & Run Test Suite
+### 2. Verify System & Run Full Test Suite
 
 ```bash
-python -m unittest discover -s tests -p "test_*.py" -v
+python -m unittest discover tests
 ```
+*(Runs 15 automated unit tests covering orchestrator, rate-limit failovers, file processing, and security hardening).*
 
-### 3. Launch the Architecture & Org Portal Locally
+### 3. Configure Credentials
+
+Copy the environment template and fill in your keys:
 
 ```bash
-python -m http.server 8090 --directory docs
+cp .env.example .env
+nano .env
 ```
-Open `http://localhost:8090` in your web browser.
 
-### 4. CLI Dynamic Agent Management
+```env
+DISCORD_BOT_TOKEN="your-discord-bot-token"
+GEMINI_API_KEY="your-google-ai-studio-key"
+# Optional fallback keys:
+GROQ_API_KEY=""
+CEREBRAS_API_KEY=""
+MISTRAL_API_KEY=""
+OPENROUTER_API_KEY=""
+```
+
+### 4. Secure the Architecture Portal
 
 ```bash
-# View active AI engineering roster
-python -m orchestrator.agent_factory list
+# Enable HTTP Basic Authentication with Bcrypt password
+python deploy/set-portal-auth.py enable <username> <password>
 
-# Dynamically recruit a specialized subagent
-python -m orchestrator.agent_factory hire \
-  --name "security-auditor" \
-  --title "Application Security Auditor" \
-  --description "Audits OWASP Top 10 vulnerabilities" \
-  --sop "1. Inspect all API endpoints. 2. Verify input validation. 3. Ensure zero hardcoded credentials." \
-  --tools "bash"
+# Check security status
+python deploy/set-portal-auth.py status
 ```
-
----
-
-## Production Deployment Profiles
-
-PakDir includes production-ready deployment assets in `deploy/`:
-- **[Budget Cloud VPS Profile (Ubuntu Minimal)](docs/deployment/vps-guide.md):** Complete guide for running on $4–$6/mo budget VPS nodes with automated Swap and ZRAM provisioning.
-- **Systemd Service:** `deploy/systemd/pakdir-orchestrator.service` with configurable resident memory safeguards (`MemoryMax`).
-- **Web Reverse Proxy:** `deploy/Caddyfile` for automatic HTTPS and documentation serving.
 
 ---
 
@@ -136,17 +164,21 @@ PakDir includes production-ready deployment assets in `deploy/`:
 
 Connect your private Discord workspace to govern your AI engineering team:
 
-| Command | Description |
-| :--- | :--- |
-| `!task <directive>` | Assign an initiative to `@em` (orchestrates PRD $\rightarrow$ Architecture $\rightarrow$ Dev $\rightarrow$ QA). |
-| `!ask <agent> <query>` | Query any agent directly (e.g., `!ask architect explain the database indexing strategy`). |
-| `!agents` | Display the active roster of AI personnel and their tool permissions. |
-| `!hire <name> <spec>` | Dynamically recruit and provision a new specialist subagent. |
-| `!specialize <name> <focus>` | Refine or specialize the operational SOP of an existing agent. |
-| `!pending` | View deliverables and Pull Requests awaiting executive approval. |
-| `!approve <task_id>` | Grant executive authorization to merge to `main` and deploy. |
-| `!reject <task_id> <notes>` | Reject task and request revisions from the engineering team. |
-| `!health` | Inspect real-time server telemetry (RAM, Swap, CPU, Disk, and LLM pools). |
+| Category | Command | Description |
+| :--- | :--- | :--- |
+| **Team & Advisory** | `!ask <@agent> [query]` | Consult an AI engineer directly. **Supports attaching `.pdf`, `.py`, `.sql`, `.json`, `.txt`, `.log` files!** |
+| | `!agents` | Display the active roster of AI personnel and their tool permissions. |
+| | `!hire <name> <spec>` | Dynamically recruit and provision a new specialist subagent. |
+| | `!specialize <@agent> <focus>` | Refine or specialize the operational SOP of an existing agent. |
+| **Mandates & Delivery** | `!task [directive]` | Launch an automated end-to-end sprint (PM $\rightarrow$ Architect $\rightarrow$ Dev $\rightarrow$ Ops $\rightarrow$ Auto-Healing). **Supports attaching PRD / spec documents!** |
+| | `!pending` | View deliverables and Pull Requests awaiting executive approval. |
+| | `!approve <task_id> [note]` | Grant executive authorization to merge branch to `main` and deploy. |
+| | `!reject <task_id> <reason>` | Reject task and request revisions from the engineering team. |
+| **DevOps & Security** | `!health` | Inspect real-time server telemetry (RAM, Swap, Disk, Services, Git). |
+| | `!security` *(or `!sec`)* | Real-time security posture audit & Portal Port 8080 lock status. |
+| | `!ports` | Instant listening port inspection (`ss -tuln`) and UFW firewall status. |
+| | `!exec <command>` | Execute shell commands directly on the host from mobile Discord. |
+| | `!help` *(or `!commands`)* | Display the interactive executive command guide. |
 
 ---
 
@@ -155,17 +187,20 @@ Connect your private Discord workspace to govern your AI engineering team:
 ```text
 pak-dir/
 ├── .opencode/
-│   └── agent/                     # Declarative subagent prompts & SOPs
+│   └── agent/                     # Declarative subagent prompts & Anti-Laziness SOPs
 │       ├── em.md                  # Engineering Manager & Dynamic Org Builder
 │       ├── pm.md                  # Product Manager (PRD & Acceptance Criteria)
 │       ├── architect.md           # System Architect (C4 Diagrams, ERD, ADR)
 │       ├── dev.md                 # Fullstack Engineer (Feature branches & tests)
 │       ├── ops.md                 # QA & DevOps (Test validation & node telemetry)
 │       └── archive/               # Archived specialist prompts
-├── data/                          # Persistent SQLite WAL state database
+├── data/                          # Persistent storage
+│   ├── company_state.db           # SQLite WAL state store
+│   └── uploads/                   # Archive for CTO-uploaded text & PDF attachments
 ├── deploy/                        # Infrastructure deployment profiles & automation
 │   ├── setup-host.sh              # General host setup script
-│   ├── Caddyfile                  # Lightweight web server configuration
+│   ├── set-portal-auth.py         # Automated Bcrypt password & portal security manager
+│   ├── Caddyfile                  # Hardened reverse proxy configuration with security headers
 │   └── systemd/                   # Memory-capped systemd service definitions
 ├── docs/                          # Live Docsify & Mermaid Architecture Portal
 │   ├── index.html                 # Docsify SPA entry point
@@ -177,11 +212,16 @@ pak-dir/
 ├── orchestrator/                  # Python control plane package
 │   ├── __init__.py                # Package metadata
 │   ├── agent_factory.py           # Dynamic subagent provisioning & org-chart sync
-│   ├── discord_bot.py             # Discord executive control interface
+│   ├── discord_bot.py             # Discord executive control interface & auto-chunker
+│   ├── file_processor.py          # Document & PDF text extraction engine
 │   ├── llm_router.py              # Zero-cost multi-provider LLM fallback router
 │   ├── state_db.py                # SQLite WAL state store
-│   └── supervisor.py              # EM supervisory state machine & self-healing loop
-├── tests/                         # End-to-end integration & unit test suite
+│   ├── supervisor.py              # EM supervisory state machine & self-healing loop
+│   └── system_context.py          # Host telemetry, port inspection & security auditing
+├── tests/                         # Comprehensive automated test suite
+│   ├── test_orchestrator.py       # Core orchestration, agent factory & approval gate tests
+│   ├── test_file_processor.py     # Text & PDF extraction and attachment guardrail tests
+│   └── test_security_hardening.py # Caddy hardening, Bcrypt hashing & auth toggle tests
 ├── .env.example                   # Environment credential template
 ├── opencode.json                  # OpenCode runtime configuration (LSP disabled)
 ├── pyproject.toml                 # Standard packaging specification
