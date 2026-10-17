@@ -36,6 +36,12 @@ echo "🐍 [4/6] Setting up Python virtual environment..."
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$APP_DIR"
 
+# Prevent Git 'dubious ownership' issues across user/root boundaries
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
+git config --global --add safe.directory '*' 2>/dev/null || true
+sudo git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
+sudo git config --global --add safe.directory '*' 2>/dev/null || true
+
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip

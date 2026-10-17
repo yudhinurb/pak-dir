@@ -87,9 +87,10 @@ def get_git_status() -> str:
     Mengambil informasi branch git dan commit terakhir.
     """
     try:
-        branch = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, timeout=3).stdout.strip()
-        last_log = subprocess.run(["git", "log", "-1", "--oneline"], capture_output=True, text=True, timeout=3).stdout.strip()
-        diff_stat = subprocess.run(["git", "status", "-s"], capture_output=True, text=True, timeout=3).stdout.strip()
+        git_cmd = ["git", "-c", "safe.directory=*"]
+        branch = subprocess.run(git_cmd + ["branch", "--show-current"], capture_output=True, text=True, timeout=3).stdout.strip()
+        last_log = subprocess.run(git_cmd + ["log", "-1", "--oneline"], capture_output=True, text=True, timeout=3).stdout.strip()
+        diff_stat = subprocess.run(git_cmd + ["status", "-s"], capture_output=True, text=True, timeout=3).stdout.strip()
         dirty = " (ada perubahan lokal)" if diff_stat else " (clean)"
         return f"Branch: `{branch or 'main'}` | Commit: `{last_log}`{dirty}"
     except Exception:
@@ -117,8 +118,9 @@ def get_live_server_context() -> str:
 
 def get_git_summary_str() -> str:
     try:
-        branch = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, timeout=3).stdout.strip()
-        last_log = subprocess.run(["git", "log", "-1", "--oneline"], capture_output=True, text=True, timeout=3).stdout.strip()
+        git_cmd = ["git", "-c", "safe.directory=*"]
+        branch = subprocess.run(git_cmd + ["branch", "--show-current"], capture_output=True, text=True, timeout=3).stdout.strip()
+        last_log = subprocess.run(git_cmd + ["log", "-1", "--oneline"], capture_output=True, text=True, timeout=3).stdout.strip()
         return f"{branch or 'main'} ({last_log})"
     except Exception:
         return "main"
@@ -127,14 +129,21 @@ def get_git_summary_str() -> str:
 def execute_server_command(cmd: str, timeout: int = 15) -> str:
     """
     Mengeksekusi perintah terminal atas perintah langsung CTO.
+    Menyertakan safe.directory=* pada env agar tidak terkena dubious ownership error.
     """
     try:
+        env = os.environ.copy()
+        env["GIT_CONFIG_COUNT"] = "1"
+        env["GIT_CONFIG_KEY_0"] = "safe.directory"
+        env["GIT_CONFIG_VALUE_0"] = "*"
+
         # Jalankan di bash jika Linux, atau shell default
         proc = subprocess.run(
             cmd,
             shell=True,
             capture_output=True,
             text=True,
+            env=env,
             timeout=timeout,
         )
         out = (proc.stdout or "").strip()

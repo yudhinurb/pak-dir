@@ -74,15 +74,18 @@ class EMSupervisor:
         self.max_retries = max_retries
 
     def _run_git(self, args: List[str]) -> Tuple[int, str]:
-        """Menjalankan perintah git dengan git committer default agar tidak gagal saat config user kosong."""
+        """Menjalankan perintah git dengan git committer default dan safe.directory=* agar tidak terkena dubious ownership."""
         env = os.environ.copy()
         env["GIT_AUTHOR_NAME"] = "PakDir AI"
         env["GIT_AUTHOR_EMAIL"] = "bot@pakdir.ai"
         env["GIT_COMMITTER_NAME"] = "PakDir AI"
         env["GIT_COMMITTER_EMAIL"] = "bot@pakdir.ai"
+        env["GIT_CONFIG_COUNT"] = "1"
+        env["GIT_CONFIG_KEY_0"] = "safe.directory"
+        env["GIT_CONFIG_VALUE_0"] = "*"
         try:
             proc = subprocess.run(
-                ["git"] + args,
+                ["git", "-c", "safe.directory=*"] + args,
                 cwd=str(self.root_dir),
                 capture_output=True,
                 text=True,
