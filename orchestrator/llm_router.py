@@ -121,9 +121,10 @@ def _call_gemini_endpoint(model_name: str, system_prompt: str, prompt: str, api_
             if choices and choices[0].get("message", {}).get("content"):
                 return 0, choices[0]["message"]["content"]
     except urllib.error.HTTPError as e:
-        err_openai = e.read().decode("utf-8", errors="ignore")
+        err_openai = e.read().decode("utf-8", errors="ignore").strip()
+        clean_openai = err_openai[:300] + "..." if len(err_openai) > 300 else err_openai
         if e.code == 429:
-            return 429, f"Gemini 429 Rate Limit: {err_openai}"
+            return 429, f"Gemini 429 Rate Limit: {clean_openai}"
         # Jika bukan 429, coba metode generateContent di bawah
     except Exception:
         pass
@@ -153,8 +154,9 @@ def _call_gemini_endpoint(model_name: str, system_prompt: str, prompt: str, api_
                 if parts and parts[0].get("text"):
                     return 0, parts[0]["text"]
     except urllib.error.HTTPError as e:
-        err_native = e.read().decode("utf-8", errors="ignore")
-        return e.code, f"Gemini HTTP {e.code} ({model_name}): {err_native}"
+        err_native = e.read().decode("utf-8", errors="ignore").strip()
+        clean_native = err_native[:300] + "..." if len(err_native) > 300 else err_native
+        return e.code, f"Gemini HTTP {e.code} ({model_name}): {clean_native}"
     except Exception as e:
         return 1, f"Gemini Error ({model_name}): {e}"
 
@@ -223,9 +225,10 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
                 data = json.loads(resp.read().decode("utf-8"))
                 return 0, data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="ignore")
-            print(f"[LLM Router] Groq HTTP {e.code}: {err_body}")
-            return e.code, f"Groq HTTP {e.code}: {err_body}"
+            err_body = e.read().decode("utf-8", errors="ignore").strip()
+            clean_body = err_body[:300] + "..." if len(err_body) > 300 else err_body
+            print(f"[LLM Router] Groq HTTP {e.code}: {clean_body}")
+            return e.code, f"Groq HTTP {e.code}: {clean_body}"
         except Exception as e:
             print(f"[LLM Router] Groq Error: {e}")
             return 1, f"Error koneksi Groq: {e}"
@@ -259,9 +262,10 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
                 data = json.loads(resp.read().decode("utf-8"))
                 return 0, data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="ignore")
-            print(f"[LLM Router] Cerebras HTTP {e.code}: {err_body}")
-            return e.code, f"Cerebras HTTP {e.code}: {err_body}"
+            err_body = e.read().decode("utf-8", errors="ignore").strip()
+            clean_body = err_body[:300] + "..." if len(err_body) > 300 else err_body
+            print(f"[LLM Router] Cerebras HTTP {e.code}: {clean_body}")
+            return e.code, f"Cerebras HTTP {e.code}: {clean_body}"
         except Exception as e:
             return 1, f"Error koneksi Cerebras: {e}"
 
@@ -294,9 +298,10 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
                 data = json.loads(resp.read().decode("utf-8"))
                 return 0, data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="ignore")
-            print(f"[LLM Router] OpenRouter HTTP {e.code}: {err_body}")
-            return e.code, f"OpenRouter HTTP {e.code}: {err_body}"
+            err_body = e.read().decode("utf-8", errors="ignore").strip()
+            clean_body = err_body[:300] + "..." if len(err_body) > 300 else err_body
+            print(f"[LLM Router] OpenRouter HTTP {e.code}: {clean_body}")
+            return e.code, f"OpenRouter HTTP {e.code}: {clean_body}"
         except Exception as e:
             return 1, f"Error koneksi OpenRouter: {e}"
 
@@ -328,9 +333,10 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
                 data = json.loads(resp.read().decode("utf-8"))
                 return 0, data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="ignore")
-            print(f"[LLM Router] Mistral HTTP {e.code}: {err_body}")
-            return e.code, f"Mistral HTTP {e.code}: {err_body}"
+            err_body = e.read().decode("utf-8", errors="ignore").strip()
+            clean_body = err_body[:300] + "..." if len(err_body) > 300 else err_body
+            print(f"[LLM Router] Mistral HTTP {e.code}: {clean_body}")
+            return e.code, f"Mistral HTTP {e.code}: {clean_body}"
         except Exception as e:
             return 1, f"Error koneksi Mistral: {e}"
 

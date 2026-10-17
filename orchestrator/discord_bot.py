@@ -24,18 +24,19 @@ from orchestrator.file_processor import (
 )
 
 
-async def send_split_message(ctx: Any, text: str, max_chunk_size: int = 1850) -> None:
+async def send_split_message(ctx: Any, text: str, max_chunk_size: int = 1800) -> None:
     """
     Mengirim pesan ke Discord dengan memecah pesan panjang menjadi beberapa bagian
     agar tidak terpotong oleh batas limit 2000 karakter Discord dan memastikan
     blok kode Markdown (```) tidak rusak di tengah.
     """
+    text = str(text or "").strip()
     if not text:
         return
 
-    text = str(text).strip()
     if len(text) <= max_chunk_size:
-        await ctx.send(text)
+        safe_text = text[:1950] if len(text) > 1950 else text
+        await ctx.send(safe_text)
         return
 
     chunks: List[str] = []
@@ -47,7 +48,7 @@ async def send_split_message(ctx: Any, text: str, max_chunk_size: int = 1850) ->
         if split_idx == -1 or split_idx < max_chunk_size // 3:
             # Jika tidak ada baris baru yang pas, cari spasi
             split_idx = remaining.rfind(" ", 0, max_chunk_size)
-        if split_idx == -1:
+        if split_idx == -1 or split_idx <= 0:
             split_idx = max_chunk_size
 
         chunk = remaining[:split_idx].rstrip()
@@ -70,9 +71,14 @@ async def send_split_message(ctx: Any, text: str, max_chunk_size: int = 1850) ->
     for idx, c in enumerate(chunks):
         if total_chunks > 1 and idx > 0:
             header = f"*(Lanjutan {idx + 1}/{total_chunks})*\n"
-            await ctx.send(header + c)
+            msg_to_send = header + c
         else:
-            await ctx.send(c)
+            msg_to_send = c
+
+        # Jaminan mutlak: pesan tidak pernah melebihi 1950 karakter ke Discord API
+        if len(msg_to_send) > 1950:
+            msg_to_send = msg_to_send[:1940] + "\n```\n...(dipotong)"
+        await ctx.send(msg_to_send)
 
 
 def get_server_health_report() -> str:
@@ -327,6 +333,25 @@ def run_discord_bot() -> None:
     async def on_ready() -> None:
         print(f"[CTO Orchestrator] Online sebagai {bot.user} | Siap melayani CTO!", flush=True)
 
+    @bot.event
+    async def on_command_error(ctx: Any, error: Any) -> None:
+        if isinstance(error, commands.CommandNotFound):
+            return
+        if isinstance(error, commands.MissingRequiredArgument):
+            await send_split_message(
+                ctx,
+                f"⚠️ Parameter perintah kurang: `{error.param.name}`. Ketik `!help` untuk format lengkap.",
+            )
+            return
+
+        orig_err = getattr(error, "original", error)
+        print(f"[Discord Command Error] {ctx.command}: {orig_err}", flush=True)
+        err_text = str(orig_err)[:1000]
+        await send_split_message(
+            ctx,
+            f"⚠️ Terjadi kendala saat menjalankan `!{ctx.invoked_with}`:\n```{err_text}```",
+        )
+
     @bot.command(name="help", aliases=["commands", "menu", "bantuan"])
     async def cmd_help(ctx: Any) -> None:
         """Menampilkan panduan lengkap perintah Ruang Kantor Virtual CTO."""
@@ -384,10 +409,11 @@ def run_discord_bot() -> None:
     async def cmd_exec(ctx: Any, *, command: str) -> None:
         """Menjalankan perintah terminal di host langsung atas instruksi CTO."""
         clean_cmd = command.strip().strip("`")
+        display_cmd = clean_cmd[:100] + "..." if len(clean_cmd) > 100 else clean_cmd
         print(f"[Discord Exec] Instruksi terminal dari CTO: '{clean_cmd}'", flush=True)
-        await ctx.send(f"⚙️ Mengeksekusi di server: `{clean_cmd}`...")
+        await ctx.send(f"⚙️ Mengeksekusi di server: `{display_cmd}`...")
         out = await asyncio.to_thread(execute_server_command, clean_cmd)
-        msg = f"💻 **Hasil Eksekusi `{clean_cmd}`**:\n```bash\n{out}\n```"
+        msg = f"💻 **Hasil Eksekusi `{display_cmd}`**:\n```bash\n{out}\n```"
         await send_split_message(ctx, msg)
 
     @bot.command(name="agents")
@@ -437,7 +463,8 @@ def run_discord_bot() -> None:
             await send_split_message(ctx, reply)
         except Exception as exc:
             print(f"[Discord Error] {exc}", flush=True)
-            await ctx.send(f"⚠️ Terjadi kendala saat memanggil `@{clean_agent}`:\n```{exc}```")
+            err_msg = f"⚠️ Terjadi kendala saat memanggil `@{clean_agent}`:\n```{str(exc)[:1500]}```"
+            await send_split_message(ctx, err_msg)
 
     @bot.command(name="hire")
     async def cmd_hire(ctx: Any, name: str, *, spec: str) -> None:
@@ -495,7 +522,8 @@ def run_discord_bot() -> None:
             await asyncio.to_thread(handler.supervisor.execute_cto_mandate, final_instruction, send_progress)
         except Exception as exc:
             print(f"[Discord Error Task] {exc}", flush=True)
-            await ctx.send(f"⚠️ Eksekusi task gagal:\n```{exc}```")
+            err_msg = f"⚠️ Eksekusi task gagal:\n```{str(exc)[:1500]}```"
+            await send_split_message(ctx, err_msg)
 
     @bot.command(name="status", aliases=["tasks", "antrean", "antrian", "progress"])
     async def cmd_status(ctx: Any) -> None:
@@ -538,7 +566,8 @@ def run_discord_bot() -> None:
             )
             await send_split_message(ctx, msg)
         except Exception as exc:
-            await ctx.send(f"⚠️ Gagal approve task #{task_id}: {exc}")
+            err_msg = f"⚠️ Gagal approve task #{task_id}: {str(exc)[:1500]}"
+            await send_split_message(ctx, err_msg)
 
     @bot.command(name="reject")
     async def cmd_reject(ctx: Any, task_id: int, *, reason: str) -> None:
