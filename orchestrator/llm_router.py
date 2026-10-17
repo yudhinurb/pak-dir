@@ -14,6 +14,7 @@ from orchestrator.state_db import StateDB
 # Universal high-speed free models supported across all free tiers
 FREE_MODEL_POOLS: Dict[str, List[str]] = {
     "reasoning": [
+        "google/gemini-3.5-flash-lite",
         "google/gemini-2.5-flash",
         "google/gemini-2.0-flash",
         "google/gemini-1.5-flash",
@@ -24,6 +25,7 @@ FREE_MODEL_POOLS: Dict[str, List[str]] = {
         "cerebras/llama-3.3-70b",
     ],
     "coding": [
+        "google/gemini-3.5-flash-lite",
         "google/gemini-2.5-flash",
         "google/gemini-2.0-flash",
         "google/gemini-1.5-flash",
@@ -176,7 +178,7 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
         raw_model = env_model or model.split("/")[-1]
 
         models_to_try = [raw_model]
-        for fallback in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro"):
+        for fallback in ("gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
             if fallback not in models_to_try:
                 models_to_try.append(fallback)
 
