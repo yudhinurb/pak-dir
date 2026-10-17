@@ -39,6 +39,11 @@ class StateDB:
                     retry_count INTEGER NOT NULL DEFAULT 0,
                     summary TEXT DEFAULT '',
                     cto_feedback TEXT DEFAULT '',
+                    pm_output TEXT DEFAULT '',
+                    arch_output TEXT DEFAULT '',
+                    dev_output TEXT DEFAULT '',
+                    ops_output TEXT DEFAULT '',
+                    commit_hash TEXT DEFAULT '',
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
@@ -61,6 +66,19 @@ class StateDB:
                 );
                 """
             )
+            # Migrasi tabel jika kolom baru belum ada di database lama
+            cur = conn.execute("PRAGMA table_info(tasks)")
+            columns = {row["name"] for row in cur.fetchall()}
+            new_columns = {
+                "pm_output": "TEXT DEFAULT ''",
+                "arch_output": "TEXT DEFAULT ''",
+                "dev_output": "TEXT DEFAULT ''",
+                "ops_output": "TEXT DEFAULT ''",
+                "commit_hash": "TEXT DEFAULT ''",
+            }
+            for col_name, col_def in new_columns.items():
+                if col_name not in columns:
+                    conn.execute(f"ALTER TABLE tasks ADD COLUMN {col_name} {col_def}")
 
     def create_task(self, title: str, instruction: str, branch_name: str) -> int:
         now = time.time()
@@ -83,6 +101,11 @@ class StateDB:
         retry_count: Optional[int] = None,
         summary: Optional[str] = None,
         cto_feedback: Optional[str] = None,
+        pm_output: Optional[str] = None,
+        arch_output: Optional[str] = None,
+        dev_output: Optional[str] = None,
+        ops_output: Optional[str] = None,
+        commit_hash: Optional[str] = None,
     ) -> None:
         fields: List[str] = ["updated_at = ?"]
         values: List[Any] = [time.time()]
@@ -102,6 +125,21 @@ class StateDB:
         if cto_feedback is not None:
             fields.append("cto_feedback = ?")
             values.append(cto_feedback)
+        if pm_output is not None:
+            fields.append("pm_output = ?")
+            values.append(pm_output)
+        if arch_output is not None:
+            fields.append("arch_output = ?")
+            values.append(arch_output)
+        if dev_output is not None:
+            fields.append("dev_output = ?")
+            values.append(dev_output)
+        if ops_output is not None:
+            fields.append("ops_output = ?")
+            values.append(ops_output)
+        if commit_hash is not None:
+            fields.append("commit_hash = ?")
+            values.append(commit_hash)
 
         values.append(task_id)
         sql = f"UPDATE tasks SET {', '.join(fields)} WHERE id = ?"
@@ -117,6 +155,24 @@ class StateDB:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM tasks WHERE status = 'WAITING_CTO_APPROVAL' ORDER BY id ASC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_active_tasks(self) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM tasks 
+                WHERE status IN ('IN_PROGRESS', 'WAITING_CTO_APPROVAL') 
+                ORDER BY updated_at DESC
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_recent_tasks(self, limit: int = 5) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tasks ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
             return [dict(r) for r in rows]
 

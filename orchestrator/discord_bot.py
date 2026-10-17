@@ -2,8 +2,9 @@ import asyncio
 import os
 import platform
 import shutil
+import time
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from orchestrator.agent_factory import AgentFactory
 from orchestrator.llm_router import FreeLLMRouter, FREE_MODEL_POOLS
@@ -137,9 +138,9 @@ class CTOCommandHandler:
     Handler logika perintah CTO yang dapat dipanggil dari Discord Bot maupun CLI/Test.
     """
 
-    def __init__(self, root_dir: str | Path = ".") -> None:
+    def __init__(self, root_dir: str | Path = ".", state_db: Optional[StateDB] = None) -> None:
         self.root_dir = Path(root_dir).resolve()
-        self.state_db = StateDB(self.root_dir / "data" / "company_state.db")
+        self.state_db = state_db or StateDB(self.root_dir / "data" / "company_state.db")
         self.router = FreeLLMRouter(state_db=self.state_db)
         self.factory = AgentFactory(root_dir=self.root_dir, state_db=self.state_db)
         self.supervisor = EMSupervisor(
@@ -201,6 +202,103 @@ class CTOCommandHandler:
             )
         return "\n".join(lines)
 
+    def handle_status(self) -> str:
+        active_tasks = self.state_db.get_active_tasks()
+        recent_tasks = self.state_db.get_recent_tasks(limit=5)
+        recent_events = self.state_db.get_recent_agent_events(limit=1)
+
+        lines = ["📊 **STATUS REAL-TIME TIM AI & TUGAS (PakDir Orchestrator)**\n"]
+
+        if active_tasks:
+            lines.append("⚡ **Tugas Sedang Berjalan / Menunggu Approval:**")
+            for t in active_tasks:
+                status_emoji = "⏳" if t["status"] == "WAITING_CTO_APPROVAL" else "🔄"
+                lines.append(
+                    f"{status_emoji} **Task #{t['id']}**: *{t['title']}*\n"
+                    f"   • Status: `{t['status']}` | Stage: `{t['current_stage']}`\n"
+                    f"   • Branch: `{t['branch_name']}`"
+                )
+                if t["status"] == "WAITING_CTO_APPROVAL":
+                    lines.append(f"   • 👉 Siap di-deploy: ketik `!approve {t['id']}` atau cek bukti `!taskinfo {t['id']}`")
+            lines.append("")
+        else:
+            lines.append("🟢 **Tugas Aktif:** Semua agen saat ini idle (tidak ada sprint/antrean berjalan).\n")
+
+        if recent_tasks:
+            lines.append("📁 **Riwayat 3 Tugas Terakhir:**")
+            for t in recent_tasks[:3]:
+                commit_info = f" (Commit: `{t.get('commit_hash', '')[:7]}`)" if t.get("commit_hash") else ""
+                lines.append(
+                    f"• **Task #{t['id']}** [{t['status']}]{commit_info}: {t['title']} — `{t['branch_name']}`"
+                )
+            lines.append("")
+
+        if recent_events:
+            ev = recent_events[0]
+            dt = time.strftime("%H:%M:%S", time.localtime(ev["created_at"]))
+            lines.append(f"📡 **Aktivitas Terakhir:** `[{dt}]` **@{ev['agent_name']}** (`{ev['action']}`): {ev['details'][:100]}")
+
+        lines.append("\n*Ketik `!taskinfo <id>` untuk melihat bukti hasil kerja lengkap atau `!activity` untuk riwayat timeline.*")
+        return "\n".join(lines)
+
+    def handle_taskinfo(self, task_id: int) -> str:
+        task = self.state_db.get_task(task_id)
+        if not task:
+            return f"❌ Task #{task_id} tidak ditemukan di database."
+
+        created_dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(task["created_at"]))
+        updated_dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(task["updated_at"]))
+        commit_str = f"`{task.get('commit_hash')}`" if task.get("commit_hash") else "*(Belum di-merge / Menunggu Approval)*"
+
+        lines = [
+            f"📋 **BUKTI HASIL KERJA RESMI — TASK #{task['id']}**",
+            f"• **Judul:** {task['title']}",
+            f"• **Status:** `{task['status']}` | **Tahapan:** `{task['current_stage']}`",
+            f"• **Branch:** `{task['branch_name']}`",
+            f"• **Merge Commit:** {commit_str}",
+            f"• **Percobaan QA (Retries):** {task['retry_count']}x",
+            f"• **Waktu Dibuat:** `{created_dt}` | **Terakhir Update:** `{updated_dt}`",
+            "",
+            "---",
+            "📄 **1. Deliverable Product Manager (`@pm` - PRD)**:",
+        ]
+        pm_out = task.get("pm_output") or "*(Belum ada data PRD)*"
+        lines.append(pm_out[:1200] + ("\n...(dipotong)" if len(pm_out) > 1200 else ""))
+        lines.append("")
+
+        lines.append("🏗️ **2. Deliverable Architect (`@architect` - Desain Sistem)**:")
+        arch_out = task.get("arch_output") or "*(Belum ada data Desain)*"
+        lines.append(arch_out[:1200] + ("\n...(dipotong)" if len(arch_out) > 1200 else ""))
+        lines.append("")
+
+        lines.append("💻 **3. Deliverable Developer (`@dev` - Implementasi & Kode)**:")
+        dev_out = task.get("dev_output") or "*(Belum ada data Kode)*"
+        lines.append(dev_out[:1200] + ("\n...(dipotong)" if len(dev_out) > 1200 else ""))
+        lines.append("")
+
+        lines.append("🧪 **4. Hasil QA & DevOps Verification (`@ops`)**:")
+        ops_out = task.get("ops_output") or task.get("summary") or "*(Belum ada data QA)*"
+        lines.append(ops_out[:1000] + ("\n...(dipotong)" if len(ops_out) > 1000 else ""))
+        lines.append("")
+
+        if task.get("cto_feedback"):
+            lines.append(f"💬 **Catatan CTO:** {task['cto_feedback']}")
+
+        lines.append("\n*Arsip berkas tersimpan fisik di direktori server `docs/prd/`, `docs/architecture/specs/`, dan `docs/deliverables/`.*")
+        return "\n".join(lines)
+
+    def handle_activity(self, limit: int = 10) -> str:
+        events = self.state_db.get_recent_agent_events(limit=limit)
+        if not events:
+            return "ℹ️ Belum ada catatan aktivitas agen di sistem."
+
+        lines = [f"📜 **LOG AKTIVITAS AGEN (Terbaru {len(events)} Event)**:\n"]
+        for ev in events:
+            dt = time.strftime("%H:%M:%S", time.localtime(ev["created_at"]))
+            lines.append(f"• `[{dt}]` **@{ev['agent_name']}** (`{ev['action']}`): {ev['details']}")
+
+        return "\n".join(lines)
+
 
 def run_discord_bot() -> None:
     """
@@ -237,28 +335,26 @@ def run_discord_bot() -> None:
             "Gunakan prefix `!` di awal setiap perintah.\n\n"
             "**1. Konsultasi & Manajemen Tim AI**\n"
             "• `!ask <@agent> [pertanyaan]` : Tanya/konsultasi langsung ke engineer AI.\n"
-            "  *(Mendukung lampiran file! Unggah berkas .pdf, .txt, .md, .py, .json, .sql, .log untuk dianalisis)*\n"
+            "  *(Mendukung lampiran berkas .pdf, .txt, .md, .py, .json, .sql, .log untuk dianalisis)*\n"
             "  *Contoh:* `!ask architect port apa aja yang terekspos di server?`\n"
-            "  *Contoh:* `!ask architect` + lampirkan `architecture_spec.pdf`\n"
             "• `!agents` : Tampilkan daftar seluruh karyawan AI aktif, peran, dan toolsnya.\n"
             "• `!hire <nama> <deskripsi dan SOP>` : Merekrut karyawan AI spesialis baru secara instan.\n"
-            "  *Contoh:* `!hire sec-expert Audit celah keamanan SQLi dan JWT`\n"
-            "• `!specialize <@agent> <fokus>` : Memperdalam/memperbarui SOP karyawan AI.\n"
-            "  *Contoh:* `!specialize dev Gunakan Go Fiber dan SQLite WAL mode`\n\n"
-            "**2. Eksekusi Mandat & Persetujuan Produksi**\n"
+            "• `!specialize <@agent> <fokus>` : Memperdalam/memperbarui SOP karyawan AI.\n\n"
+            "**2. Eksekusi Mandat, Observabilitas & Persetujuan Produksi**\n"
             "• `!task [instruksi]` : Jalankan sprint otomatis end-to-end (PM ➔ Architect ➔ Dev ➔ Ops ➔ Auto-Healing).\n"
-            "  *(Bisa melampirkan berkas PRD / spesifikasi .pdf / .md sebagai acuan sprint)*\n"
-            "  *Contoh:* `!task Bangun endpoint REST API /api/health dengan status database`\n"
+            "• `!status` (atau `!tasks`) : Pantau status real-time agen, task aktif, stage saat ini, dan antrean.\n"
+            "• `!activity` (atau `!events` / `!log`) : Lihat 10 riwayat aktivitas dan timeline agen terkini.\n"
+            "• `!taskinfo <task_id>` : Periksa bukti hasil kerja lengkap (@pm PRD, @architect desain, @dev kode, @ops QA).\n"
             "• `!pending` : Lihat daftar task/PR yang menunggu persetujuan (approval) CTO.\n"
-            "• `!approve <task_id> [catatan]` : Otorisasi deploy & merge kode ke branch `main`.\n"
+            "• `!approve <task_id> [catatan]` : Otorisasi deploy & merge kode ke branch `main` dengan bukti commit Git.\n"
             "• `!reject <task_id> <alasan>` : Tolak task dan instruksikan tim AI untuk revisi.\n\n"
             "**3. Telemetri & Kontrol Server Host (DevOps)**\n"
             "• `!health` : Dashboard kesehatan sistem (RAM, Swap, Disk, Layanan Inti, Git).\n"
             "• `!security` (atau `!sec`) : Audit keamanan server & status password portal arsitektur (Port 8080).\n"
             "• `!ports` : Cek port aktif/listening (`ss -tuln`) dan status firewall UFW.\n"
             "• `!exec <command>` : Jalankan perintah shell langsung di host Linux dari Discord.\n"
-            "  *Contoh:* `!exec df -h` atau `!exec git log -3 --oneline`\n"
-            "• `!help` (atau `!commands` / `!menu`) : Tampilkan panduan menu ini."
+            "  *Contoh:* `!exec git log -3 --oneline` atau `!exec df -h`\n"
+            "• `!help` (atau `!menu`) : Tampilkan panduan menu ini."
         )
         await send_split_message(ctx, menu)
 
@@ -401,18 +497,48 @@ def run_discord_bot() -> None:
             print(f"[Discord Error Task] {exc}", flush=True)
             await ctx.send(f"⚠️ Eksekusi task gagal:\n```{exc}```")
 
+    @bot.command(name="status", aliases=["tasks", "antrean", "antrian", "progress"])
+    async def cmd_status(ctx: Any) -> None:
+        """Memeriksa status real-time agen, task aktif, dan antrean."""
+        reply = await asyncio.to_thread(handler.handle_status)
+        await send_split_message(ctx, reply)
+
+    @bot.command(name="taskinfo", aliases=["detail", "taskdetail", "info", "inspect"])
+    async def cmd_taskinfo(ctx: Any, task_id: int) -> None:
+        """Memeriksa bukti kerja lengkap (PRD, Arsitektur, Kode, QA) dari suatu task."""
+        reply = await asyncio.to_thread(handler.handle_taskinfo, task_id)
+        await send_split_message(ctx, reply)
+
+    @bot.command(name="activity", aliases=["events", "log", "timeline", "kegiatan"])
+    async def cmd_activity(ctx: Any, limit: int = 10) -> None:
+        """Melihat riwayat timeline aktivitas agen terkini."""
+        reply = await asyncio.to_thread(handler.handle_activity, limit)
+        await send_split_message(ctx, reply)
+
     @bot.command(name="pending")
     async def cmd_pending(ctx: Any) -> None:
         await send_split_message(ctx, handler.handle_pending())
 
     @bot.command(name="approve")
     async def cmd_approve(ctx: Any, task_id: int, *, note: str = "Approved by CTO via Discord") -> None:
-        task = await asyncio.to_thread(handler.supervisor.approve_task, task_id, note)
-        await send_split_message(
-            ctx,
-            f"🚀 **Task #{task_id} Approved & Deployed!**\n"
-            f"Branch `{task['branch_name']}` telah di-merge ke `main`."
-        )
+        try:
+            task = await asyncio.to_thread(handler.supervisor.approve_task, task_id, note)
+            commit = task.get("commit_hash", "N/A")
+            branch = task.get("branch_name", "feat/...")
+            files = task.get("merged_files", [])
+            files_str = "\n".join(f"  • `{f}`" for f in files[:8]) if files else "  • *(Arsip deliverable di docs/)*"
+
+            msg = (
+                f"🚀 **Task #{task_id} Resmi Approved & Deployed ke Produksi!**\n"
+                f"• **Branch:** `{branch}` ➔ `main`\n"
+                f"• **Git Commit:** `{commit}`\n"
+                f"• **Catatan CTO:** *{note}*\n"
+                f"• **Berkas yang Di-merge:**\n{files_str}\n\n"
+                f"💡 *Ketik `!taskinfo {task_id}` untuk melihat bukti deliverable lengkap, atau `!exec git log -1 --stat` untuk cek status git di server.*"
+            )
+            await send_split_message(ctx, msg)
+        except Exception as exc:
+            await ctx.send(f"⚠️ Gagal approve task #{task_id}: {exc}")
 
     @bot.command(name="reject")
     async def cmd_reject(ctx: Any, task_id: int, *, reason: str) -> None:

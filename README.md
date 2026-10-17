@@ -80,10 +80,16 @@ Protect your architectural blueprints, ERDs, and PRDs from public scraping on Po
 - **Zero-Trust Loopback Mode:** Easily toggle Caddy between public binding (`:8080`) and local stealth mode (`127.0.0.1:8080` via SSH tunneling).
 - **Discord Security Audit:** Run `!security` to get an instant executive posture audit directly in Discord.
 
-### 6. 🛡️ Executive Approval Gate (Human-in-the-Loop)
-Agents are strictly sandboxed to feature branches (`feat/*`). Pull Requests enter a persistent `WAITING_CTO_APPROVAL` queue in the SQLite state store. Only after the CTO issues `!approve <task_id>` will `@ops` merge to `main` and execute release deployment.
+### 6. 🛡️ Executive Approval Gate & Real Git Merge Automation
+Agents operate on isolated feature branches (`feat/*`). Tangible deliverable files are committed directly to disk (`docs/prd/`, `docs/architecture/specs/`, and `docs/deliverables/`). Pull Requests enter a persistent `WAITING_CTO_APPROVAL` queue in the SQLite state store. Only after the CTO issues `!approve <task_id>` will a true Git `--no-ff` merge to `main` be executed, recording the exact commit hash and merged file list for end-to-end auditability.
 
-### 7. 💬 Discord Message Auto-Chunking & Markdown Repair
+### 7. 👁️ Executive Observability & Tangible Proof of Work
+Never wonder what agents are doing or doubt whether work was actually completed:
+- **`!status`**: Real-time snapshot of active sprints, which agent is currently working, the current pipeline stage (`@pm PRD`, `@architect design`, `@dev coding`, `@ops QA`), and pending approvals.
+- **`!activity`**: Chronological event log with timestamps detailing every subagent's progress.
+- **`!taskinfo <task_id>`**: Full executive deliverable dossier displaying the complete output from each agent (@pm PRD, @architect system design, @dev implementation code, @ops test verification) alongside physical file paths on the server.
+
+### 8. 💬 Discord Message Auto-Chunking & Markdown Repair
 Never lose output text due to Discord's 2,000 character limit:
 - Smart pagination automatically splits long responses into clean sequential parts (`(Bagian 1/2)`, `(Lanjutan 2/2)`).
 - Markdown code block fence repair: ensures unclosed ```` ``` ```` fences are cleanly closed in part 1 and reopened in part 2 so syntax highlighting never breaks.
@@ -127,7 +133,7 @@ pip install -r orchestrator/requirements.txt
 ```bash
 python -m unittest discover tests
 ```
-*(Runs 15 automated unit tests covering orchestrator, rate-limit failovers, file processing, and security hardening).*
+*(Runs 17 automated unit tests covering orchestrator, real git branching/merges, observability, rate-limit failovers, file processing, and security hardening).*
 
 ### 3. Configure Credentials
 
@@ -171,14 +177,17 @@ Connect your private Discord workspace to govern your AI engineering team:
 | | `!hire <name> <spec>` | Dynamically recruit and provision a new specialist subagent. |
 | | `!specialize <@agent> <focus>` | Refine or specialize the operational SOP of an existing agent. |
 | **Mandates & Delivery** | `!task [directive]` | Launch an automated end-to-end sprint (PM $\rightarrow$ Architect $\rightarrow$ Dev $\rightarrow$ Ops $\rightarrow$ Auto-Healing). **Supports attaching PRD / spec documents!** |
+| | `!status` *(or `!tasks`)* | **Live monitoring:** Check running tasks, current agent stage, waiting approvals, and recent merges. |
+| | `!activity` *(or `!log`)* | **Real-time timeline:** View the chronological event log of subagent actions with exact timestamps. |
+| | `!taskinfo <task_id>` | **Proof of work:** Inspect complete deliverables for a task (PRD, system design, source code, QA test log). |
 | | `!pending` | View deliverables and Pull Requests awaiting executive approval. |
-| | `!approve <task_id> [note]` | Grant executive authorization to merge branch to `main` and deploy. |
+| | `!approve <task_id> [note]` | Grant executive authorization to merge branch to `main` with verified Git commit hash and deploy. |
 | | `!reject <task_id> <reason>` | Reject task and request revisions from the engineering team. |
 | **DevOps & Security** | `!health` | Inspect real-time server telemetry (RAM, Swap, Disk, Services, Git). |
 | | `!security` *(or `!sec`)* | Real-time security posture audit & Portal Port 8080 lock status. |
 | | `!ports` | Instant listening port inspection (`ss -tuln`) and UFW firewall status. |
 | | `!exec <command>` | Execute shell commands directly on the host from mobile Discord. |
-| | `!help` *(or `!commands`)* | Display the interactive executive command guide. |
+| | `!help` *(or `!menu`)* | Display the interactive executive command guide. |
 
 ---
 
