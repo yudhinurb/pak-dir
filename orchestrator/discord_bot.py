@@ -217,12 +217,42 @@ def run_discord_bot() -> None:
 
     intents = discord.Intents.default()
     intents.message_content = True
-    bot = commands.Bot(command_prefix="!", intents=intents)
+    bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
     handler = CTOCommandHandler(".")
 
     @bot.event
     async def on_ready() -> None:
         print(f"[CTO Orchestrator] Online sebagai {bot.user} | Siap melayani CTO!", flush=True)
+
+    @bot.command(name="help", aliases=["commands", "menu", "bantuan"])
+    async def cmd_help(ctx: Any) -> None:
+        """Menampilkan panduan lengkap perintah Ruang Kantor Virtual CTO."""
+        menu = (
+            "🏛️ **KANTOR VIRTUAL CTO — DAFTAR PERINTAH RESMI (PakDir)**\n"
+            "Gunakan prefix `!` di awal setiap perintah.\n\n"
+            "**1. Konsultasi & Manajemen Tim AI**\n"
+            "• `!ask <@agent> <pertanyaan>` : Tanya/konsultasi langsung ke engineer AI.\n"
+            "  *Contoh:* `!ask architect port apa aja yang terekspos di server?`\n"
+            "  *Contoh:* `!ask ops gimana kondisi RAM dan swap saat ini?`\n"
+            "• `!agents` : Tampilkan daftar seluruh karyawan AI aktif, peran, dan toolsnya.\n"
+            "• `!hire <nama> <deskripsi dan SOP>` : Merekrut karyawan AI spesialis baru secara instan.\n"
+            "  *Contoh:* `!hire sec-expert Audit celah keamanan SQLi dan JWT`\n"
+            "• `!specialize <@agent> <fokus>` : Memperdalam/memperbarui SOP karyawan AI.\n"
+            "  *Contoh:* `!specialize dev Gunakan Go Fiber dan SQLite WAL mode`\n\n"
+            "**2. Eksekusi Mandat & Persetujuan Produksi**\n"
+            "• `!task <instruksi fitur/bugfix>` : Jalankan sprint otomatis end-to-end (PM ➔ Architect ➔ Dev ➔ Ops ➔ Auto-Healing).\n"
+            "  *Contoh:* `!task Bangun endpoint REST API /api/health dengan status database`\n"
+            "• `!pending` : Lihat daftar task/PR yang menunggu persetujuan (approval) CTO.\n"
+            "• `!approve <task_id> [catatan]` : Otorisasi deploy & merge kode ke branch `main`.\n"
+            "• `!reject <task_id> <alasan>` : Tolak task dan instruksikan tim AI untuk revisi.\n\n"
+            "**3. Telemetri & Kontrol Server Host (DevOps)**\n"
+            "• `!health` : Dashboard kesehatan sistem (RAM, Swap, Disk, Layanan Inti, Git).\n"
+            "• `!ports` : Cek port aktif/listening (`ss -tuln`) dan status firewall UFW.\n"
+            "• `!exec <command>` : Jalankan perintah shell langsung di host Linux dari Discord.\n"
+            "  *Contoh:* `!exec df -h` atau `!exec git log -3 --oneline`\n"
+            "• `!help` (atau `!commands` / `!menu`) : Tampilkan panduan menu ini."
+        )
+        await send_split_message(ctx, menu)
 
     @bot.command(name="health")
     async def cmd_health(ctx: Any) -> None:
