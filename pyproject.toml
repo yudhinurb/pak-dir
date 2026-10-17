@@ -16,7 +16,8 @@ dependencies = [
     "discord.py>=2.3.2",
     "aiohttp>=3.9.0",
     "python-dotenv>=1.0.1",
-    "psutil>=5.9.8"
+    "psutil>=5.9.8",
+    "pypdf>=4.0.0"
 ]
 
 [project.urls]

@@ -16,6 +16,10 @@ from orchestrator.system_context import (
     get_git_status,
     execute_server_command,
 )
+from orchestrator.file_processor import (
+    process_single_attachment,
+    format_attachments_context,
+)
 
 
 async def send_split_message(ctx: Any, text: str, max_chunk_size: int = 1850) -> None:
@@ -231,16 +235,18 @@ def run_discord_bot() -> None:
             "🏛️ **KANTOR VIRTUAL CTO — DAFTAR PERINTAH RESMI (PakDir)**\n"
             "Gunakan prefix `!` di awal setiap perintah.\n\n"
             "**1. Konsultasi & Manajemen Tim AI**\n"
-            "• `!ask <@agent> <pertanyaan>` : Tanya/konsultasi langsung ke engineer AI.\n"
+            "• `!ask <@agent> [pertanyaan]` : Tanya/konsultasi langsung ke engineer AI.\n"
+            "  *(Mendukung lampiran file! Unggah berkas .pdf, .txt, .md, .py, .json, .sql, .log untuk dianalisis)*\n"
             "  *Contoh:* `!ask architect port apa aja yang terekspos di server?`\n"
-            "  *Contoh:* `!ask ops gimana kondisi RAM dan swap saat ini?`\n"
+            "  *Contoh:* `!ask architect` + lampirkan `architecture_spec.pdf`\n"
             "• `!agents` : Tampilkan daftar seluruh karyawan AI aktif, peran, dan toolsnya.\n"
             "• `!hire <nama> <deskripsi dan SOP>` : Merekrut karyawan AI spesialis baru secara instan.\n"
             "  *Contoh:* `!hire sec-expert Audit celah keamanan SQLi dan JWT`\n"
             "• `!specialize <@agent> <fokus>` : Memperdalam/memperbarui SOP karyawan AI.\n"
             "  *Contoh:* `!specialize dev Gunakan Go Fiber dan SQLite WAL mode`\n\n"
             "**2. Eksekusi Mandat & Persetujuan Produksi**\n"
-            "• `!task <instruksi fitur/bugfix>` : Jalankan sprint otomatis end-to-end (PM ➔ Architect ➔ Dev ➔ Ops ➔ Auto-Healing).\n"
+            "• `!task [instruksi]` : Jalankan sprint otomatis end-to-end (PM ➔ Architect ➔ Dev ➔ Ops ➔ Auto-Healing).\n"
+            "  *(Bisa melampirkan berkas PRD / spesifikasi .pdf / .md sebagai acuan sprint)*\n"
             "  *Contoh:* `!task Bangun endpoint REST API /api/health dengan status database`\n"
             "• `!pending` : Lihat daftar task/PR yang menunggu persetujuan (approval) CTO.\n"
             "• `!approve <task_id> [catatan]` : Otorisasi deploy & merge kode ke branch `main`.\n"
@@ -285,12 +291,45 @@ def run_discord_bot() -> None:
         await send_split_message(ctx, handler.handle_agents_list())
 
     @bot.command(name="ask")
-    async def cmd_ask(ctx: Any, agent_name: str, *, question: str) -> None:
+    async def cmd_ask(ctx: Any, agent_name: str, *, question: Optional[str] = None) -> None:
         clean_agent = agent_name.lstrip("@").lower()
-        print(f"[Discord] Diterima perintah: !ask @{clean_agent} '{question}'", flush=True)
+        uploads_dir = handler.root_dir / "data" / "uploads"
+
+        # 1. Unduh dan proses jika ada lampiran file (PDF, TXT, PY, JSON, SQL, dll.)
+        attachments_context = ""
+        if ctx.message.attachments:
+            processed_items = []
+            for att in ctx.message.attachments:
+                await ctx.send(f"📎 Mengunduh & memproses lampiran: `{att.filename}` ({att.size / 1024:.1f} KB)...")
+                raw_bytes = await att.read()
+                res = await asyncio.to_thread(
+                    process_single_attachment,
+                    att.filename,
+                    raw_bytes,
+                    uploads_dir,
+                )
+                processed_items.append(res)
+            attachments_context = format_attachments_context(processed_items)
+
+        # 2. Tangani pertanyaan/prompt
+        user_question = (question or "").strip()
+        if not user_question:
+            if attachments_context:
+                user_question = "Tolong analisa, review, dan jelaskan poin-poin penting serta rekomendasi teknis dari dokumen/berkas terlampir."
+            else:
+                await ctx.send(
+                    f"⚠️ Silakan sertakan pertanyaan atau lampiran berkas untuk `@{clean_agent}`.\n"
+                    f"Contoh: `!ask {clean_agent} apa fungsi modul ini?` atau unggah berkas dengan `!ask {clean_agent}`"
+                )
+                return
+
+        final_prompt = f"{user_question}\n\n{attachments_context}" if attachments_context else user_question
+
+        num_att = len(ctx.message.attachments) if ctx.message.attachments else 0
+        print(f"[Discord] Diterima perintah: !ask @{clean_agent} (lampiran: {num_att}) '{user_question[:80]}'", flush=True)
         await ctx.send(f"🔍 Menghubungi `@{clean_agent}`...")
         try:
-            reply = await asyncio.to_thread(handler.handle_ask, clean_agent, question)
+            reply = await asyncio.to_thread(handler.handle_ask, clean_agent, final_prompt)
             await send_split_message(ctx, reply)
         except Exception as exc:
             print(f"[Discord Error] {exc}", flush=True)
@@ -314,14 +353,42 @@ def run_discord_bot() -> None:
         await send_split_message(ctx, reply)
 
     @bot.command(name="task")
-    async def cmd_task(ctx: Any, *, instruction: str) -> None:
+    async def cmd_task(ctx: Any, *, instruction: Optional[str] = None) -> None:
+        uploads_dir = handler.root_dir / "data" / "uploads"
+
+        # 1. Unduh dan proses jika ada lampiran file mandat/spesifikasi
+        attachments_context = ""
+        if ctx.message.attachments:
+            processed_items = []
+            for att in ctx.message.attachments:
+                await ctx.send(f"📎 Mengunduh dokumen mandat: `{att.filename}` ({att.size / 1024:.1f} KB)...")
+                raw_bytes = await att.read()
+                res = await asyncio.to_thread(
+                    process_single_attachment,
+                    att.filename,
+                    raw_bytes,
+                    uploads_dir,
+                )
+                processed_items.append(res)
+            attachments_context = format_attachments_context(processed_items)
+
+        task_instruction = (instruction or "").strip()
+        if not task_instruction:
+            if attachments_context:
+                task_instruction = "Implementasikan fitur dan rancangan sistem sesuai dokumen spesifikasi terlampir."
+            else:
+                await ctx.send("⚠️ Silakan sertakan instruksi atau lampirkan dokumen spesifikasi tugas. Contoh: `!task Buat endpoint /api/health`")
+                return
+
+        final_instruction = f"{task_instruction}\n\n{attachments_context}" if attachments_context else task_instruction
+
         loop = asyncio.get_running_loop()
 
         def send_progress(msg: str) -> None:
             asyncio.run_coroutine_threadsafe(send_split_message(ctx, msg), loop)
 
         try:
-            await asyncio.to_thread(handler.supervisor.execute_cto_mandate, instruction, send_progress)
+            await asyncio.to_thread(handler.supervisor.execute_cto_mandate, final_instruction, send_progress)
         except Exception as exc:
             print(f"[Discord Error Task] {exc}", flush=True)
             await ctx.send(f"⚠️ Eksekusi task gagal:\n```{exc}```")
