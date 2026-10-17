@@ -15,6 +15,7 @@ from orchestrator.system_context import (
     get_active_services,
     get_git_status,
     execute_server_command,
+    get_security_audit_report,
 )
 from orchestrator.file_processor import (
     process_single_attachment,
@@ -253,6 +254,7 @@ def run_discord_bot() -> None:
             "• `!reject <task_id> <alasan>` : Tolak task dan instruksikan tim AI untuk revisi.\n\n"
             "**3. Telemetri & Kontrol Server Host (DevOps)**\n"
             "• `!health` : Dashboard kesehatan sistem (RAM, Swap, Disk, Layanan Inti, Git).\n"
+            "• `!security` (atau `!sec`) : Audit keamanan server & status password portal arsitektur (Port 8080).\n"
             "• `!ports` : Cek port aktif/listening (`ss -tuln`) dan status firewall UFW.\n"
             "• `!exec <command>` : Jalankan perintah shell langsung di host Linux dari Discord.\n"
             "  *Contoh:* `!exec df -h` atau `!exec git log -3 --oneline`\n"
@@ -263,6 +265,12 @@ def run_discord_bot() -> None:
     @bot.command(name="health")
     async def cmd_health(ctx: Any) -> None:
         await send_split_message(ctx, get_server_health_report())
+
+    @bot.command(name="security", aliases=["sec", "audit"])
+    async def cmd_security(ctx: Any) -> None:
+        """Memeriksa postur keamanan host dan status proteksi password portal."""
+        report = await asyncio.to_thread(get_security_audit_report)
+        await send_split_message(ctx, report)
 
     @bot.command(name="ports")
     async def cmd_ports(ctx: Any) -> None:

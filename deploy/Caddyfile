@@ -3,8 +3,26 @@
     file_server
     encode gzip
 
-    # Opsional: Aktifkan Basic Auth agar hanya CTO yang bisa mengakses portal
-    # basicauth /* {
+    # 1. Batasi hanya metode baca (Read-Only)
+    @disallowed_methods not method GET HEAD
+    respond @disallowed_methods "Method Not Allowed" 405
+
+    # 2. Blokir keras seluruh file sensitif
+    @sensitive_files {
+        path */.* *.env* *.db* *.sh *.py *.key *.log data/*
+    }
+    respond @sensitive_files 404
+
+    # 3. Security Headers Anti-Clickjacking & Anti-MIME-Sniffing
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # 4. HTTP Basic Authentication (Dikelola otomatis via deploy/set-portal-auth.py)
+    # basicauth * {
     #     cto $2a$14$ContohHashBcryptPasswordElu
     # }
 }

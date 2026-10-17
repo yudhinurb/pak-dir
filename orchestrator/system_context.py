@@ -1,5 +1,6 @@
 import os
 import platform
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -146,3 +147,62 @@ def execute_server_command(cmd: str, timeout: int = 15) -> str:
         return f"⚠️ Perintah timeout setelah {timeout} detik."
     except Exception as e:
         return f"⚠️ Terjadi error saat mengeksekusi perintah: {e}"
+
+
+def get_security_audit_report() -> str:
+    """
+    Melakukan audit postur keamanan host & Caddy portal architecture secara real-time.
+    """
+    caddy_stat = {"auth_enabled": False, "is_loopback": False, "username": None, "port": ":8080"}
+    caddyfile_paths = [Path("/etc/caddy/Caddyfile"), Path("deploy/Caddyfile")]
+    
+    for cp in caddyfile_paths:
+        if cp.exists():
+            try:
+                text = cp.read_text(encoding="utf-8")
+                # Deteksi basicauth aktif
+                match = re.search(r"(?m)^\s*basicauth\s+\*\s*\{\s*([a-zA-Z0-9_-]+)\s+(\$2[abxy]?\$[^\s]+)", text)
+                if match:
+                    caddy_stat["auth_enabled"] = True
+                    caddy_stat["username"] = match.group(1)
+                if "127.0.0.1:8080" in text or "localhost:8080" in text:
+                    caddy_stat["is_loopback"] = True
+                    caddy_stat["port"] = "127.0.0.1:8080"
+                break
+            except Exception:
+                pass
+
+    fw = get_firewall_status()
+    ports = get_listening_ports()
+
+    # Evaluasi status keamanan
+    if caddy_stat["auth_enabled"]:
+        portal_status = f"🟢 **TERKUNCI** (HTTP BasicAuth aktif untuk user `{caddy_stat.get('username') or 'cto'}`)"
+        posture = "🛡️ **Postur Keamanan:** `EXCELLENT (Portal arsitektur aman dari pencurian/bot)`"
+        mitigation = "✅ Tidak ada tindakan darurat yang diperlukan. Blueprint arsitektur dan PRD Anda aman."
+    elif caddy_stat["is_loopback"]:
+        portal_status = "🟢 **PRIVATE LOOPBACK** (Hanya localhost `127.0.0.1:8080` via SSH Tunnel)"
+        posture = "🛡️ **Postur Keamanan:** `ZERO-TRUST (100% Private / Stealth Mode)`"
+        mitigation = "✅ Port tertutup total dari internet publik."
+    else:
+        portal_status = "🔴 **TERBUKA UNTUK PUBLIK TANPA PASSWORD**"
+        posture = "⚠️ **Postur Keamanan:** `PERHATIAN / VULNERABLE TO SCRAPING`"
+        mitigation = (
+            "🚨 **Rekomendasi Tindakan Keamanan:**\n"
+            "Kunci portal arsitektur Anda dengan password menggunakan perintah:\n"
+            "`python deploy/set-portal-auth.py enable <username> <password>`\n"
+            "*(Bisa juga langsung dari Discord: `!exec python deploy/set-portal-auth.py enable cto Rahasia123!`)*"
+        )
+
+    lines = [
+        "🛡️ **LAPORAN AUDIT KEAMANAN HOST & PORTAL (PakDir)**",
+        posture,
+        f"- **Status Portal Port 8080:** {portal_status}",
+        f"- **Binding Interface:** `{caddy_stat['port']}`",
+        f"- **Firewall Host:** `{fw}`",
+        f"\n{mitigation}\n",
+        "📋 **Port Listening Terdeteksi di Host:**",
+        f"```\n{ports[:600]}\n```",
+    ]
+    return "\n".join(lines)
+
