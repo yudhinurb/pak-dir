@@ -216,16 +216,25 @@ class CTOCommandHandler:
         lines = ["📊 **STATUS REAL-TIME TIM AI & TUGAS (PakDir Orchestrator)**\n"]
 
         if active_tasks:
-            lines.append("⚡ **Tugas Sedang Berjalan / Menunggu Approval:**")
+            lines.append("⚡ **Tugas Sedang Berjalan / Menunggu Tindakan:**")
             for t in active_tasks:
-                status_emoji = "⏳" if t["status"] == "WAITING_CTO_APPROVAL" else "🔄"
+                st = t["status"]
+                if st == "WAITING_CTO_APPROVAL":
+                    status_emoji = "⏳"
+                    action_hint = f"👉 Siap di-deploy: ketik `!approve {t['id']}` atau cek bukti `!taskinfo {t['id']}`"
+                elif st in ("NEEDS_CTO_INTERVENTION", "REJECTED_BY_CTO"):
+                    status_emoji = "⚠️"
+                    action_hint = f"👉 Berhenti / butuh arahan: ketik `!retry {t['id']} [catatan revisi]` untuk memicu kembali tim AI"
+                else:
+                    status_emoji = "🔄"
+                    action_hint = f"👉 Sedang dikerjakan tim AI (Stage: `{t['current_stage']}`)"
+
+                loc = f" | Lokasi: `{t['project_dir']}`" if t.get("project_dir") else ""
                 lines.append(
                     f"{status_emoji} **Task #{t['id']}**: *{t['title']}*\n"
-                    f"   • Status: `{t['status']}` | Stage: `{t['current_stage']}`\n"
-                    f"   • Branch: `{t['branch_name']}`"
+                    f"   • Status: `{t['status']}` | Stage: `{t['current_stage']}`{loc}\n"
+                    f"   • {action_hint}"
                 )
-                if t["status"] == "WAITING_CTO_APPROVAL":
-                    lines.append(f"   • 👉 Siap di-deploy: ketik `!approve {t['id']}` atau cek bukti `!taskinfo {t['id']}`")
             lines.append("")
         else:
             lines.append("🟢 **Tugas Aktif:** Semua agen saat ini idle (tidak ada sprint/antrean berjalan).\n")
@@ -255,11 +264,13 @@ class CTOCommandHandler:
         created_dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(task["created_at"]))
         updated_dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(task["updated_at"]))
         commit_str = f"`{task.get('commit_hash')}`" if task.get("commit_hash") else "*(Belum di-merge / Menunggu Approval)*"
+        proj_dir_str = f"`{task.get('project_dir')}`" if task.get("project_dir") else "*(Root)*"
 
         lines = [
             f"📋 **BUKTI HASIL KERJA RESMI — TASK #{task['id']}**",
             f"• **Judul:** {task['title']}",
             f"• **Status:** `{task['status']}` | **Tahapan:** `{task['current_stage']}`",
+            f"• **Lokasi Proyek di Server:** {proj_dir_str}",
             f"• **Branch:** `{task['branch_name']}`",
             f"• **Merge Commit:** {commit_str}",
             f"• **Percobaan QA (Retries):** {task['retry_count']}x",
@@ -372,7 +383,8 @@ def run_discord_bot() -> None:
             "• `!taskinfo <task_id>` : Periksa bukti hasil kerja lengkap (@pm PRD, @architect desain, @dev kode, @ops QA).\n"
             "• `!pending` : Lihat daftar task/PR yang menunggu persetujuan (approval) CTO.\n"
             "• `!approve <task_id> [catatan]` : Otorisasi deploy & merge kode ke branch `main` dengan bukti commit Git.\n"
-            "• `!reject <task_id> <alasan>` : Tolak task dan instruksikan tim AI untuk revisi.\n\n"
+            "• `!reject <task_id> <alasan>` : Tolak task dan simpan catatan revisi.\n"
+            "• `!retry <task_id> [catatan]` (atau `!resume`) : Memicu kembali tim AI untuk melanjutkan/merevisi task yang berhenti atau ditolak.\n\n"
             "**3. Telemetri & Kontrol Server Host (DevOps)**\n"
             "• `!health` : Dashboard kesehatan sistem (RAM, Swap, Disk, Layanan Inti, Git).\n"
             "• `!security` (atau `!sec`) : Audit keamanan server & status password portal arsitektur (Port 8080).\n"
@@ -572,7 +584,32 @@ def run_discord_bot() -> None:
     @bot.command(name="reject")
     async def cmd_reject(ctx: Any, task_id: int, *, reason: str) -> None:
         await asyncio.to_thread(handler.supervisor.reject_task, task_id, reason)
-        await send_split_message(ctx, f"🛑 **Task #{task_id} Ditolak CTO.** Catatan revisi disimpan: *{reason}*")
+        msg = (
+            f"🛑 **Task #{task_id} Ditolak CTO.** Catatan revisi disimpan: *{reason}*\n"
+            f"💡 *Ketik `!retry {task_id}` untuk langsung memerintahkan tim AI merevisi kode sesuai catatan ini.*"
+        )
+        await send_split_message(ctx, msg)
+
+    @bot.command(name="retry", aliases=["resume", "lanjut", "revisi"])
+    async def cmd_retry(ctx: Any, task_id: int, *, note: Optional[str] = None) -> None:
+        """Melanjutkan pengerjaan task yang berhenti atau merevisi task yang ditolak."""
+        loop = asyncio.get_running_loop()
+
+        def send_progress(msg: str) -> None:
+            asyncio.run_coroutine_threadsafe(send_split_message(ctx, msg), loop)
+
+        try:
+            await ctx.send(f"🔄 Mengaktifkan kembali tim AI untuk melanjutkan Task #{task_id}...")
+            await asyncio.to_thread(
+                handler.supervisor.resume_task,
+                task_id,
+                note or "",
+                send_progress,
+            )
+        except Exception as exc:
+            print(f"[Discord Error Retry] {exc}", flush=True)
+            err_msg = f"⚠️ Gagal melanjutkan task #{task_id}:\n```{str(exc)[:1500]}```"
+            await send_split_message(ctx, err_msg)
 
     bot.run(token)
 

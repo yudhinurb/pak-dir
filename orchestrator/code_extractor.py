@@ -8,6 +8,10 @@ FORBIDDEN_TARGETS = {
     ".env",
     ".git",
     "data/company_state.db",
+    "orchestrator",
+    "opencode.json",
+    "systemd",
+    ".venv",
 }
 
 VALID_EXTENSIONS = {

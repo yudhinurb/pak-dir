@@ -75,20 +75,21 @@ class StateDB:
                 "dev_output": "TEXT DEFAULT ''",
                 "ops_output": "TEXT DEFAULT ''",
                 "commit_hash": "TEXT DEFAULT ''",
+                "project_dir": "TEXT DEFAULT ''",
             }
             for col_name, col_def in new_columns.items():
                 if col_name not in columns:
                     conn.execute(f"ALTER TABLE tasks ADD COLUMN {col_name} {col_def}")
 
-    def create_task(self, title: str, instruction: str, branch_name: str) -> int:
+    def create_task(self, title: str, instruction: str, branch_name: str, project_dir: str = "") -> int:
         now = time.time()
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO tasks (title, instruction, branch_name, status, current_stage, created_at, updated_at)
-                VALUES (?, ?, ?, 'IN_PROGRESS', 'EM_EVALUATION', ?, ?)
+                INSERT INTO tasks (title, instruction, branch_name, project_dir, status, current_stage, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'IN_PROGRESS', 'EM_EVALUATION', ?, ?)
                 """,
-                (title, instruction, branch_name, now, now),
+                (title, instruction, branch_name, project_dir, now, now),
             )
             return int(cur.lastrowid)
 
@@ -106,6 +107,7 @@ class StateDB:
         dev_output: Optional[str] = None,
         ops_output: Optional[str] = None,
         commit_hash: Optional[str] = None,
+        project_dir: Optional[str] = None,
     ) -> None:
         fields: List[str] = ["updated_at = ?"]
         values: List[Any] = [time.time()]
@@ -140,6 +142,9 @@ class StateDB:
         if commit_hash is not None:
             fields.append("commit_hash = ?")
             values.append(commit_hash)
+        if project_dir is not None:
+            fields.append("project_dir = ?")
+            values.append(project_dir)
 
         values.append(task_id)
         sql = f"UPDATE tasks SET {', '.join(fields)} WHERE id = ?"
@@ -163,7 +168,7 @@ class StateDB:
             rows = conn.execute(
                 """
                 SELECT * FROM tasks 
-                WHERE status IN ('IN_PROGRESS', 'WAITING_CTO_APPROVAL') 
+                WHERE status IN ('IN_PROGRESS', 'WAITING_CTO_APPROVAL', 'NEEDS_CTO_INTERVENTION', 'REJECTED_BY_CTO') 
                 ORDER BY updated_at DESC
                 """
             ).fetchall()

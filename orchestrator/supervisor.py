@@ -69,6 +69,7 @@ class EMSupervisor:
         factory: Optional[AgentFactory] = None,
         max_retries: int = 3,
         qa_runner: Optional[Callable[[Path, List[Path]], Tuple[int, str]]] = None,
+        projects_dir: Optional[str | Path] = None,
     ) -> None:
         self.root_dir = Path(root_dir).resolve()
         self.state_db = state_db or StateDB(self.root_dir / "data" / "company_state.db")
@@ -77,8 +78,18 @@ class EMSupervisor:
         self.max_retries = max_retries
         self.qa_runner = qa_runner or (lambda root, files: run_real_qa(root, written_files=files))
 
-    def _run_git(self, args: List[str]) -> Tuple[int, str]:
-        """Menjalankan perintah git dengan git committer default dan safe.directory=* agar tidak terkena dubious ownership."""
+        if projects_dir:
+            self.projects_dir = Path(projects_dir).resolve()
+        elif os.getenv("PROJECTS_DIR"):
+            self.projects_dir = Path(os.getenv("PROJECTS_DIR")).resolve()
+        elif self.root_dir.name == "pak-dir" or (self.root_dir / "orchestrator").exists():
+            # Isolasi otomatis: proyek pengguna berada di ../projects agar pak-dir tidak tercemar
+            self.projects_dir = (self.root_dir.parent / "projects").resolve()
+        else:
+            self.projects_dir = self.root_dir
+
+    def _run_git_cwd(self, args: List[str], cwd: Path) -> Tuple[int, str]:
+        """Menjalankan perintah git pada direktori kerja cwd tertentu."""
         env = os.environ.copy()
         env["GIT_AUTHOR_NAME"] = "PakDir AI"
         env["GIT_AUTHOR_EMAIL"] = "bot@pakdir.ai"
@@ -90,7 +101,7 @@ class EMSupervisor:
         try:
             proc = subprocess.run(
                 ["git", "-c", "safe.directory=*"] + args,
-                cwd=str(self.root_dir),
+                cwd=str(cwd),
                 capture_output=True,
                 text=True,
                 env=env,
@@ -101,13 +112,42 @@ class EMSupervisor:
         except Exception as exc:
             return 1, str(exc)
 
-    def _is_git_repo(self) -> bool:
-        code, out = self._run_git(["rev-parse", "--is-inside-work-tree"])
+    def _run_git(self, args: List[str]) -> Tuple[int, str]:
+        """Menjalankan perintah git pada root_dir orkestrator."""
+        return self._run_git_cwd(args, self.root_dir)
+
+    def _is_git_repo_at(self, directory: Path) -> bool:
+        if not directory.exists():
+            return False
+        code, out = self._run_git_cwd(["rev-parse", "--is-inside-work-tree"], directory)
         return code == 0 and out.strip() == "true"
+
+    def _is_git_repo(self) -> bool:
+        return self._is_git_repo_at(self.root_dir)
 
     def _get_current_branch(self) -> str:
         code, out = self._run_git(["rev-parse", "--abbrev-ref", "HEAD"])
         return out.strip() if code == 0 and out.strip() else "main"
+
+    def _resolve_task_project_dir(self, instruction: str, slug: str) -> Path:
+        """
+        Menentukan direktori proyek fisik di server.
+        Memastikan proyek pengguna (website, api, tools) dibangun di luar direktori pak-dir.
+        """
+        target_match = re.search(
+            r"(?:\[|\b)(?:target|folder|dir|path)\s*[:=]\s*([a-zA-Z]:[\\/][^\s\]]+|[/~][^\s\]]+|[a-zA-Z0-9_\-\.\/]+)",
+            instruction,
+            re.IGNORECASE,
+        )
+        if target_match:
+            raw_p = target_match.group(1).strip()
+            custom_path = Path(os.path.expanduser(raw_p)).resolve()
+            return custom_path
+
+        if self.projects_dir != self.root_dir:
+            return (self.projects_dir / slug).resolve()
+
+        return self.root_dir
 
     @staticmethod
     def _slugify_branch(title: str) -> str:
@@ -156,25 +196,34 @@ class EMSupervisor:
 
         short_title = instruction.strip().split("\n")[0][:60]
         branch_name = self._slugify_branch(short_title)
+        slug = branch_name.replace("feat/", "")
+        target_dir = self._resolve_task_project_dir(instruction, slug)
+        target_dir.mkdir(parents=True, exist_ok=True)
+
         task_id = self.state_db.create_task(
             title=short_title,
             instruction=instruction,
             branch_name=branch_name,
+            project_dir=str(target_dir),
         )
 
         self.state_db.log_agent_event(
             "MANDATE_RECEIVED",
             "em",
-            f"Menerima Task #{task_id}: {short_title} (Branch: {branch_name})",
+            f"Menerima Task #{task_id}: {short_title} (Branch: {branch_name}, Lokasi: {target_dir})",
         )
-        notify(f"👔 **[EM-Agent]** Menerima Task #{task_id}: *{short_title}* (Branch: `{branch_name}`)")
+        notify(
+            f"👔 **[EM-Agent]** Menerima Task #{task_id}: *{short_title}* (Branch: `{branch_name}`)\n"
+            f"📂 **[Workspace]** Direktori Proyek di Server: `{target_dir}`"
+        )
 
-        is_git = self._is_git_repo()
+        is_git_target = self._is_git_repo_at(target_dir) if target_dir != self.root_dir else self._is_git_repo()
+        git_cwd = target_dir if target_dir != self.root_dir else self.root_dir
         curr_branch = "main"
-        if is_git:
-            curr_branch = self._get_current_branch()
-            # Buat dan checkout ke branch khusus task sejak awal
-            self._run_git(["checkout", "-B", branch_name])
+        if is_git_target:
+            code_b, out_b = self._run_git_cwd(["rev-parse", "--abbrev-ref", "HEAD"], git_cwd)
+            curr_branch = out_b.strip() if code_b == 0 and out_b.strip() else "main"
+            self._run_git_cwd(["checkout", "-B", branch_name], git_cwd)
 
         # Tahap 0: Evaluasi Tim & Dynamic Agent Factory
         specialists = self.evaluate_and_prepare_team(instruction)
@@ -195,13 +244,13 @@ class EMSupervisor:
         )
 
         # Simpan deliverable fisik PRD
-        slug = branch_name.replace("feat/", "")
         prd_dir = self.root_dir / "docs" / "prd"
         prd_dir.mkdir(parents=True, exist_ok=True)
         prd_file = prd_dir / f"task_{task_id}_{slug}.md"
         prd_content = (
             f"# PRD Task #{task_id}: {short_title}\n\n"
             f"- **Branch:** `{branch_name}`\n"
+            f"- **Direktori Proyek di Server:** `{target_dir}`\n"
             f"- **Instruksi CTO:** {instruction}\n"
             f"- **Model Generator:** `{pm_res['model']}`\n\n"
             f"## Spesifikasi & Kriteria Penerimaan\n\n"
@@ -227,6 +276,7 @@ class EMSupervisor:
             "architect",
             (
                 f"Berdasarkan PRD berikut:\n{pm_res['output']}\n\n"
+                f"Proyek ini dibangun di direktori server terpisah: `{target_dir}` (di luar pak-dir).\n"
                 f"Rancang arsitektur hemat sumber daya dan perbarui diagram di docs/architecture/ untuk: {instruction}"
             ),
         )
@@ -238,6 +288,7 @@ class EMSupervisor:
         arch_content = (
             f"# Desain Arsitektur Task #{task_id}: {short_title}\n\n"
             f"- **Branch:** `{branch_name}`\n"
+            f"- **Direktori Proyek di Server:** `{target_dir}`\n"
             f"- **Model Generator:** `{arch_res['model']}`\n\n"
             f"## Rancangan Arsitektur & Diagram Komponen\n\n"
             f"{arch_res['output']}\n"
@@ -272,7 +323,7 @@ class EMSupervisor:
             self.state_db.log_agent_event(
                 "STAGE_START",
                 "dev",
-                f"Task #{task_id}: Menulis kode implementasi (Percobaan #{attempt})",
+                f"Task #{task_id}: Menulis kode implementasi di {target_dir} (Percobaan #{attempt})",
             )
 
             fix_context = (
@@ -281,8 +332,11 @@ class EMSupervisor:
                 else ""
             )
             dev_prompt = (
-                f"Implementasikan fitur di branch {branch_name} sesuai desain Architect:\n"
+                f"Implementasikan fitur di direktori server `{target_dir}` sesuai desain Architect:\n"
                 f"{arch_res['output']}{fix_context}\n\n"
+                f"LOKASI KERJA PROYEK DI SERVER:\n"
+                f"- Direktori Proyek: `{target_dir}`\n"
+                f"- PakDir adalah sistem orkestrator terpisah dan TIDAK BOLEH dimodifikasi.\n\n"
                 "PANDUAN FORMAT BERKAS SUMBER KODE:\n"
                 "Tuliskan seluruh berkas kode yang dibuat/dimodifikasi menggunakan format terstruktur berikut agar dapat ditulis langsung ke sistem:\n"
                 "### File: path/ke/berkas.ext\n"
@@ -294,9 +348,9 @@ class EMSupervisor:
             dev_res = self.router.run_agent("dev", dev_prompt)
             dev_output = dev_res["output"]
 
-            # Ekstrak dan tulis berkas fisik nyata ke repositori
+            # Ekstrak dan tulis berkas fisik nyata ke direktori proyek target
             blocks = extract_code_blocks(dev_output)
-            written = write_extracted_code_files(blocks, self.root_dir)
+            written = write_extracted_code_files(blocks, target_dir)
             for w in written:
                 if w not in all_created_files:
                     all_created_files.append(w)
@@ -305,6 +359,7 @@ class EMSupervisor:
             deliv_content = (
                 f"# Implementasi Deliverable Task #{task_id}: {short_title}\n\n"
                 f"- **Branch:** `{branch_name}`\n"
+                f"- **Direktori Proyek di Server:** `{target_dir}`\n"
                 f"- **Attempt:** {attempt}\n"
                 f"- **Model Generator:** `{dev_res['model']}`\n\n"
                 f"## Berkas Kode yang Dihasilkan Fisik:\n"
@@ -312,7 +367,7 @@ class EMSupervisor:
             if all_created_files:
                 for f in all_created_files:
                     try:
-                        rel = f.relative_to(self.root_dir)
+                        rel = f.relative_to(target_dir)
                     except Exception:
                         rel = f
                     deliv_content += f"- `{rel}`\n"
@@ -325,7 +380,7 @@ class EMSupervisor:
             self.state_db.log_agent_event(
                 "STAGE_FINISH",
                 "dev",
-                f"Task #{task_id}: Kode selesai dibuat ({len(all_created_files)} berkas nyata) dan dicatat di docs/deliverables/{deliv_file.name}",
+                f"Task #{task_id}: Kode selesai dibuat ({len(all_created_files)} berkas nyata di {target_dir}) dan dicatat di docs/deliverables/{deliv_file.name}",
             )
 
             # Jalankan agen spesialis jika ada
@@ -337,7 +392,7 @@ class EMSupervisor:
                 )
                 self.router.run_agent(
                     spec_agent,
-                    f"Tinjau dan optimalkan implementasi pada branch {branch_name}: {dev_output}",
+                    f"Tinjau dan optimalkan implementasi pada proyek {target_dir}: {dev_output}",
                 )
                 self.state_db.log_agent_event(
                     "STAGE_FINISH",
@@ -345,19 +400,19 @@ class EMSupervisor:
                     f"Task #{task_id}: Review spesialis selesai",
                 )
 
-            # Jalankan QA Otomatis Nyata di Server
+            # Jalankan QA Otomatis Nyata di Direktori Proyek Target
             self.state_db.update_task(task_id, current_stage=f"OPS_QA_ATTEMPT_{attempt}")
             self.state_db.log_agent_event(
                 "STAGE_START",
                 "ops",
-                f"Task #{task_id}: Menjalankan unit test & verifikasi QA nyata (Percobaan #{attempt})",
+                f"Task #{task_id}: Menjalankan unit test & verifikasi QA nyata di {target_dir} (Percobaan #{attempt})",
             )
 
-            real_qa_code, real_qa_log = self.qa_runner(self.root_dir, all_created_files)
+            real_qa_code, real_qa_log = self.qa_runner(target_dir, all_created_files)
 
             # Minta @ops memvalidasi dan menganalisis hasil QA
             ops_prompt = (
-                f"Berikut adalah hasil pengujian otomatis nyata di server untuk branch {branch_name}:\n"
+                f"Berikut adalah hasil pengujian otomatis nyata di `{target_dir}` untuk branch {branch_name}:\n"
                 f"- Exit Code: {real_qa_code}\n"
                 f"- Log Pengujian:\n{real_qa_log}\n\n"
                 f"Lakukan evaluasi QA, periksa stabilitas telemetri sistem, dan laporkan status kelayakan deployment."
@@ -386,8 +441,8 @@ class EMSupervisor:
             )
 
         if not qa_passed:
-            if is_git:
-                self._run_git(["checkout", curr_branch])
+            if is_git_target:
+                self._run_git_cwd(["checkout", curr_branch], git_cwd)
             self.state_db.update_task(
                 task_id,
                 status="NEEDS_CTO_INTERVENTION",
@@ -400,23 +455,26 @@ class EMSupervisor:
                 f"Task #{task_id} gagal QA setelah {self.max_retries}x percobaan",
             )
             notify(
-                f"❌ **[EM-Agent]** Task #{task_id} gagal lulus QA setelah {self.max_retries}x percobaan. "
-                f"Butuh arahan CTO."
+                f"❌ **[EM-Agent]** Task #{task_id} gagal lulus QA setelah {self.max_retries}x percobaan.\n"
+                f"Butuh arahan CTO: ketik `!retry {task_id} [instruksi perbaikan]` untuk melanjutkan."
             )
             return self.state_db.get_task(task_id) or {}
 
         # Tahap 5: Isolasi Git Branch & Commit Deliverables + Source Code Nyata
-        if is_git:
-            files_to_add = ["docs/prd", "docs/architecture", "docs/deliverables"]
+        if is_git_target:
+            files_to_add = []
+            if target_dir == self.root_dir:
+                files_to_add.extend(["docs/prd", "docs/architecture", "docs/deliverables"])
             for f in all_created_files:
                 try:
-                    rel_f = str(f.relative_to(self.root_dir)).replace("\\", "/")
+                    rel_f = str(f.relative_to(git_cwd)).replace("\\", "/")
                     files_to_add.append(rel_f)
                 except Exception:
                     files_to_add.append(str(f))
-            self._run_git(["add"] + files_to_add)
+            if files_to_add:
+                self._run_git_cwd(["add"] + files_to_add, git_cwd)
 
-            code_files_str = "\n".join(f"- {f.relative_to(self.root_dir)}" for f in all_created_files) if all_created_files else "- Docs only"
+            code_files_str = "\n".join(f"- {f.relative_to(git_cwd)}" for f in all_created_files) if all_created_files else "- Docs only"
             commit_msg = (
                 f"feat(task-{task_id}): {short_title}\n\n"
                 f"Deliverables & code generated by PakDir AI team:\n"
@@ -425,16 +483,16 @@ class EMSupervisor:
                 f"- docs/deliverables/{deliv_file.name}\n"
                 f"Code files:\n{code_files_str}"
             )
-            code, status_out = self._run_git(["status", "--porcelain"])
+            code, status_out = self._run_git_cwd(["status", "--porcelain"], git_cwd)
             if status_out:
-                self._run_git(["commit", "-m", commit_msg])
-            # Kembalikan workspace ke branch awal (main) agar host tetap bersih
-            self._run_git(["checkout", curr_branch])
+                self._run_git_cwd(["commit", "-m", commit_msg], git_cwd)
+            self._run_git_cwd(["checkout", curr_branch], git_cwd)
 
         # Tahap 6: Masuk Gerbang Approval CTO
         code_count = len(all_created_files)
         summary_report = (
-            f"Branch `{branch_name}` lulus QA nyata (Percobaan ke-{attempt}).\n"
+            f"Proyek di `{target_dir}` lulus QA nyata (Percobaan ke-{attempt}).\n"
+            f"- Direktori Proyek di Server: `{target_dir}`\n"
             f"- Berkas Kode Dihasilkan: {code_count} berkas\n"
             f"- Spesialis terlibat: {', '.join(specialists) if specialists else 'Tim Inti'}\n"
             f"- Berkas Deliverable:\n"
@@ -454,11 +512,203 @@ class EMSupervisor:
         self.state_db.log_agent_event(
             "READY_FOR_APPROVAL",
             "em",
-            f"Task #{task_id} siap di-approve CTO (Branch: {branch_name})",
+            f"Task #{task_id} siap di-approve CTO (Lokasi: {target_dir})",
         )
         notify(
-            f"✅ **[EM-Agent]** Task #{task_id} siap! Ketik `!approve {task_id}` untuk Merge & Deploy, "
+            f"✅ **[EM-Agent]** Task #{task_id} siap! Ketik `!approve {task_id}` untuk Deploy ke server, "
             f"`!taskinfo {task_id}` untuk cek bukti kerja, atau `!reject {task_id} <alasan>` untuk revisi."
+        )
+        return self.state_db.get_task(task_id) or {}
+
+    def resume_task(
+        self,
+        task_id: int,
+        additional_instruction: str = "",
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Melanjutkan kembali task yang berhenti (karena QA gagal, ditolak CTO, atau interrupted).
+        Memicu loop perbaikan kode oleh @dev dan verifikasi QA oleh @ops hingga siap diajukan kembali ke CTO.
+        """
+        def notify(msg: str) -> None:
+            if progress_callback:
+                progress_callback(msg)
+
+        task = self.state_db.get_task(task_id)
+        if not task:
+            raise KeyError(f"Task #{task_id} tidak ditemukan.")
+
+        if task["status"] == "APPROVED_AND_DEPLOYED" and not additional_instruction:
+            notify(
+                f"ℹ️ Task #{task_id} sudah selesai dan di-deploy ke produksi. "
+                f"Jika ingin melakukan revisi baru, sertakan instruksi: `!retry {task_id} <catatan>`"
+            )
+            return task
+
+        short_title = task["title"]
+        branch_name = task.get("branch_name", "feat/update")
+        slug = branch_name.replace("feat/", "")
+        target_dir = Path(task.get("project_dir")) if task.get("project_dir") else self._resolve_task_project_dir(task["instruction"], slug)
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        # Rangkum feedback dan instruksi perbaikan
+        feedback_lines = []
+        if task.get("cto_feedback"):
+            feedback_lines.append(f"Catatan Revisi CTO Sebelumnya: {task['cto_feedback']}")
+        if additional_instruction:
+            feedback_lines.append(f"Arahan Baru dari CTO: {additional_instruction}")
+        if task.get("ops_output"):
+            feedback_lines.append(f"Hasil Pengujian QA Terakhir:\n{task['ops_output']}")
+        combined_feedback = "\n\n".join(feedback_lines)
+
+        self.state_db.update_task(
+            task_id,
+            status="IN_PROGRESS",
+            current_stage="RESUMED_DEV",
+            cto_feedback=combined_feedback,
+        )
+        self.state_db.log_agent_event(
+            "TASK_RESUMED",
+            "em",
+            f"Task #{task_id} dilanjutkan kembali oleh CTO. Catatan: {additional_instruction[:100]}",
+        )
+        notify(f"👔 **[EM-Agent]** Melanjutkan pengerjaan Task #{task_id}: *{short_title}*...")
+        notify(f"📂 **[Workspace]** Direktori Proyek di Server: `{target_dir}`")
+
+        # Jalankan loop perbaikan Dev + Ops
+        initial_retry = task.get("retry_count", 0)
+        attempt = 0
+        qa_passed = False
+        last_ops_output = ""
+        dev_output = ""
+        all_created_files: List[Path] = []
+
+        deliv_dir = self.root_dir / "docs" / "deliverables"
+        deliv_dir.mkdir(parents=True, exist_ok=True)
+        deliv_file = deliv_dir / f"task_{task_id}_implementation.md"
+
+        while attempt < self.max_retries:
+            attempt += 1
+            current_total_retries = initial_retry + attempt
+            self.state_db.update_task(
+                task_id,
+                current_stage=f"DEV_RETRY_ATTEMPT_{attempt}",
+                retry_count=current_total_retries,
+            )
+            self.state_db.log_agent_event(
+                "STAGE_START",
+                "dev",
+                f"Task #{task_id}: Menulis perbaikan kode di {target_dir} (Percobaan #{attempt})",
+            )
+            notify(f"🛠️ **[@dev]** Melakukan revisi dan perbaikan kode di `{target_dir}` (Percobaan #{attempt})...")
+
+            fix_context = f"\nARAHAN REVISI & PERBAIKAN:\n{combined_feedback}\n" if combined_feedback else ""
+            if last_ops_output:
+                fix_context += f"\nERROR QA SEBELUMNYA:\n{last_ops_output}\n"
+
+            dev_prompt = (
+                f"Lanjutkan perbaikan kode untuk task '{short_title}' di direktori `{target_dir}`:\n"
+                f"Instruksi Asli: {task['instruction']}\n"
+                f"Rancangan Arsitektur: {task.get('arch_output', '')}\n"
+                f"{fix_context}\n\n"
+                "PANDUAN FORMAT BERKAS SUMBER KODE:\n"
+                "Tuliskan seluruh berkas kode yang dibuat/dimodifikasi menggunakan format terstruktur berikut agar dapat ditulis langsung ke sistem:\n"
+                "### File: path/ke/berkas.ext\n"
+                "```bahasa\n"
+                "// kode lengkap di sini\n"
+                "```\n"
+                "Sertakan berkas unit test di direktori tests/ jika diperlukan."
+            )
+            dev_res = self.router.run_agent("dev", dev_prompt)
+            dev_output = dev_res["output"]
+
+            blocks = extract_code_blocks(dev_output)
+            written = write_extracted_code_files(blocks, target_dir)
+            for w in written:
+                if w not in all_created_files:
+                    all_created_files.append(w)
+
+            # Update deliverable file
+            deliv_content = (
+                f"# Revisi Deliverable Task #{task_id}: {short_title}\n\n"
+                f"- **Direktori Proyek:** `{target_dir}`\n"
+                f"- **Attempt Revisi:** {attempt}\n"
+                f"- **Model Generator:** `{dev_res['model']}`\n\n"
+                f"## Berkas Kode:\n"
+            )
+            for f in all_created_files:
+                try:
+                    rel = f.relative_to(target_dir)
+                except Exception:
+                    rel = f
+                deliv_content += f"- `{rel}`\n"
+            deliv_content += f"\n## Ringkasan Perubahan:\n\n{dev_output}\n"
+            deliv_file.write_text(deliv_content, encoding="utf-8")
+            self.state_db.update_task(task_id, dev_output=dev_output)
+
+            # Jalankan QA
+            self.state_db.update_task(task_id, current_stage=f"OPS_QA_RETRY_{attempt}")
+            real_qa_code, real_qa_log = self.qa_runner(target_dir, all_created_files)
+            ops_prompt = (
+                f"Berikut hasil pengujian otomatis nyata di `{target_dir}`:\n"
+                f"- Exit Code: {real_qa_code}\n"
+                f"- Log Pengujian:\n{real_qa_log}\n\n"
+                f"Lakukan evaluasi QA dan laporkan status kelayakan deployment."
+            )
+            ops_res = self.router.run_agent("ops", ops_prompt)
+            last_ops_output = f"[Real QA Test Exit Code: {real_qa_code}]\n{real_qa_log}\n\n[@ops Review]:\n{ops_res['output']}"
+            self.state_db.update_task(task_id, ops_output=last_ops_output)
+
+            if real_qa_code == 0 and "FAIL" not in ops_res["output"].upper() and "ERROR:" not in ops_res["output"].upper():
+                qa_passed = True
+                break
+
+            notify(
+                f"⚠️ **[EM-Agent Self-Healing]** Revisi #{attempt} QA menemukan kendala (Exit Code: {real_qa_code}). "
+                f"Menginstruksikan `@dev` memperbaiki..."
+            )
+
+        if not qa_passed:
+            self.state_db.update_task(
+                task_id,
+                status="NEEDS_CTO_INTERVENTION",
+                current_stage="QA_FAILED_MAX_RETRIES",
+                summary=last_ops_output,
+            )
+            self.state_db.log_agent_event(
+                "TASK_FAILED",
+                "em",
+                f"Task #{task_id} gagal QA setelah revisi {self.max_retries}x percobaan",
+            )
+            notify(
+                f"❌ **[EM-Agent]** Task #{task_id} masih belum lulus QA setelah {self.max_retries}x percobaan revisi.\n"
+                f"Butuh arahan CTO: ketik `!retry {task_id} <instruksi tambahan>`"
+            )
+            return self.state_db.get_task(task_id) or {}
+
+        # Sukses QA
+        code_count = len(all_created_files)
+        summary_report = (
+            f"Revisi Task #{task_id} di `{target_dir}` berhasil lulus QA nyata (Percobaan ke-{attempt}).\n"
+            f"- Direktori Proyek di Server: `{target_dir}`\n"
+            f"- Berkas Kode Dihasilkan: {code_count} berkas\n"
+            f"- Ringkasan QA/Ops: {last_ops_output[:250]}"
+        )
+        self.state_db.update_task(
+            task_id,
+            status="WAITING_CTO_APPROVAL",
+            current_stage="CTO_GATE",
+            summary=summary_report,
+        )
+        self.state_db.log_agent_event(
+            "READY_FOR_APPROVAL",
+            "em",
+            f"Task #{task_id} siap di-approve CTO setelah revisi",
+        )
+        notify(
+            f"✅ **[EM-Agent]** Task #{task_id} berhasil diperbaiki dan lulus QA!\n"
+            f"• **Lokasi Proyek:** `{target_dir}`\n"
+            f"• Ketik `!approve {task_id}` untuk Deploy, atau `!taskinfo {task_id}` untuk cek bukti kerja."
         )
         return self.state_db.get_task(task_id) or {}
 
@@ -471,31 +721,33 @@ class EMSupervisor:
                 f"Task #{task_id} berstatus '{task['status']}', bukan 'WAITING_CTO_APPROVAL'."
             )
 
+        slug = task.get("branch_name", "feat/task").replace("feat/", "")
+        target_dir = Path(task.get("project_dir")) if task.get("project_dir") else self._resolve_task_project_dir(task["instruction"], slug)
         commit_hash = ""
         merged_files: List[str] = []
 
-        if self._is_git_repo():
-            # 1. Pastikan checkout main
-            self._run_git(["checkout", "main"])
-            # 2. Merge branch task dengan no-ff
+        is_git_target = self._is_git_repo_at(target_dir) if target_dir != self.root_dir else self._is_git_repo()
+        git_cwd = target_dir if target_dir != self.root_dir else self.root_dir
+
+        if is_git_target:
+            self._run_git_cwd(["checkout", "main"], git_cwd)
             branch = task["branch_name"]
-            code, merge_out = self._run_git([
+            code, merge_out = self._run_git_cwd([
                 "merge", "--no-ff", branch,
                 "-m", f"deploy: merge task #{task_id} ({task['title']}) approved by CTO\n\nCatatan CTO: {cto_note}"
-            ])
+            ], git_cwd)
             if code == 0:
-                _, head_hash = self._run_git(["rev-parse", "--short", "HEAD"])
+                _, head_hash = self._run_git_cwd(["rev-parse", "--short", "HEAD"], git_cwd)
                 commit_hash = head_hash.strip()
-                _, files_out = self._run_git(["diff", "--name-only", "HEAD~1", "HEAD"])
+                _, files_out = self._run_git_cwd(["diff", "--name-only", "HEAD~1", "HEAD"], git_cwd)
                 merged_files = [f.strip() for f in files_out.splitlines() if f.strip()]
             else:
-                # Batalkan merge agar repositori tidak terkunci dalam status MERGING
-                self._run_git(["merge", "--abort"])
+                self._run_git_cwd(["merge", "--abort"], git_cwd)
                 raise RuntimeError(
                     f"Gagal melakukan merge branch '{branch}' ke 'main' karena terjadi konflik: {merge_out}"
                 )
         else:
-            commit_hash = f"sandbox-task-{task_id}"
+            commit_hash = f"deployed-task-{task_id}"
             merged_files = [
                 f"docs/prd/task_{task_id}_*.md",
                 f"docs/architecture/specs/task_{task_id}_design.md",
@@ -506,13 +758,14 @@ class EMSupervisor:
             "ops",
             (
                 f"CTO telah memberikan APPROVAL untuk Task #{task_id}. "
-                f"Merge branch {task['branch_name']} ke main (Commit: {commit_hash}) dan jalankan smoke test."
+                f"Proyek berada di `{target_dir}`. "
+                f"Lakukan konfirmasi deployment (Commit: {commit_hash}) dan berikan panduan cara menjalankan aplikasi di server."
             ),
         )
 
         deploy_summary = (
             f"{task['summary']}\n"
-            f"[DEPLOYED - Commit: {commit_hash}]: {ops_deploy['output']}"
+            f"[DEPLOYED - Lokasi: {target_dir} - Commit: {commit_hash}]: {ops_deploy['output']}"
         )
         self.state_db.update_task(
             task_id,
@@ -525,10 +778,11 @@ class EMSupervisor:
         self.state_db.log_agent_event(
             "TASK_DEPLOYED",
             "ops",
-            f"Task #{task_id} di-merge ke main (Commit: {commit_hash}). Catatan CTO: {cto_note}",
+            f"Task #{task_id} di-deploy ke `{target_dir}` (Commit: {commit_hash}). Catatan CTO: {cto_note}",
         )
         res = self.state_db.get_task(task_id) or {}
         res["merged_files"] = merged_files
+        res["project_dir"] = str(target_dir)
         return res
 
     def reject_task(self, task_id: int, reason: str) -> Dict[str, Any]:
