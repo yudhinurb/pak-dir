@@ -1,14 +1,17 @@
+import json
+import os
+import shutil
 import subprocess
 import time
+import urllib.error
+import urllib.request
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from orchestrator.state_db import StateDB
 
 
-# Daftar rotasi model gratis (Open-Weight & Frontier Free Tiers)
-# Dikelompokkan berdasarkan kebutuhan tugas agar kualitas tinggi & bebas biaya.
 FREE_MODEL_POOLS: Dict[str, List[str]] = {
-    # Untuk EM-Agent, System Architect, & Product Manager (Reasoning & Context Besar)
     "reasoning": [
         "google/gemini-2.5-pro",
         "openrouter/deepseek/deepseek-r1:free",
@@ -16,7 +19,6 @@ FREE_MODEL_POOLS: Dict[str, List[str]] = {
         "cerebras/llama-3.3-70b",
         "google/gemini-2.5-flash",
     ],
-    # Untuk Dev-Agent, Ops-Agent, & Spesialis Koding (Cepat & Akurat di Kode)
     "coding": [
         "mistral/codestral-latest",
         "openrouter/qwen/qwen3-coder:free",
@@ -46,11 +48,198 @@ RATE_LIMIT_SIGNALS = (
 )
 
 
+def _load_agent_system_prompt(agent_name: str) -> str:
+    path = Path(".opencode/agent") / f"{agent_name}.md"
+    if path.exists():
+        try:
+            return path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    return (
+        f"You are @{agent_name}, an expert AI engineering professional working for the CTO.\n"
+        "Always give structured, professional, production-grade responses."
+    )
+
+
+def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, str]:
+    """
+    Eksekutor API langsung (Direct Native LLM Caller) untuk Gemini, Groq, Cerebras,
+    OpenRouter, dan Mistral tanpa ketergantungan binary CLI eksternal.
+    """
+    system_prompt = _load_agent_system_prompt(agent_name)
+
+    # 1. Google Gemini (Google AI Studio)
+    if "google" in model or "gemini" in model:
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            return 1, "⚠️ GEMINI_API_KEY belum diisi di file .env. Silakan masukkan kunci API dari Google AI Studio."
+        model_name = model.split("/")[-1]
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        payload = {
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        }
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        return 0, parts[0].get("text", "")
+                return 1, "Model Gemini tidak mengembalikan output teks."
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="ignore")
+            return e.code, f"Gemini HTTP {e.code}: {err_body}"
+        except Exception as e:
+            return 1, f"Error koneksi Gemini: {e}"
+
+    # 2. Groq Cloud
+    if "groq" in model:
+        api_key = os.getenv("GROQ_API_KEY", "").strip()
+        if not api_key:
+            return 1, "⚠️ GROQ_API_KEY belum diisi di file .env."
+        model_name = model.split("/")[-1]
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        payload = {
+            "model": model_name or "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return 0, data["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="ignore")
+            return e.code, f"Groq HTTP {e.code}: {err_body}"
+        except Exception as e:
+            return 1, f"Error koneksi Groq: {e}"
+
+    # 3. Cerebras
+    if "cerebras" in model:
+        api_key = os.getenv("CEREBRAS_API_KEY", "").strip()
+        if not api_key:
+            return 1, "⚠️ CEREBRAS_API_KEY belum diisi di file .env."
+        model_name = model.split("/")[-1]
+        url = "https://api.cerebras.ai/v1/chat/completions"
+        payload = {
+            "model": model_name or "llama3.3-70b",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return 0, data["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="ignore")
+            return e.code, f"Cerebras HTTP {e.code}: {err_body}"
+        except Exception as e:
+            return 1, f"Error koneksi Cerebras: {e}"
+
+    # 4. OpenRouter
+    if "openrouter" in model:
+        api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        if not api_key:
+            return 1, "⚠️ OPENROUTER_API_KEY belum diisi di file .env."
+        clean_model = model.replace("openrouter/", "")
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        payload = {
+            "model": clean_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return 0, data["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="ignore")
+            return e.code, f"OpenRouter HTTP {e.code}: {err_body}"
+        except Exception as e:
+            return 1, f"Error koneksi OpenRouter: {e}"
+
+    # 5. Mistral
+    if "mistral" in model:
+        api_key = os.getenv("MISTRAL_API_KEY", "").strip()
+        if not api_key:
+            return 1, "⚠️ MISTRAL_API_KEY belum diisi di file .env."
+        clean_model = model.replace("mistral/", "")
+        url = "https://api.mistral.ai/v1/chat/completions"
+        payload = {
+            "model": clean_model or "codestral-latest",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return 0, data["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="ignore")
+            return e.code, f"Mistral HTTP {e.code}: {err_body}"
+        except Exception as e:
+            return 1, f"Error koneksi Mistral: {e}"
+
+    return 1, f"Provider model '{model}' tidak didukung."
+
+
 class FreeLLMRouter:
     """
     Multi-Provider Free Fallback Router.
-    Memanggil OpenCode CLI (`opencode run --agent <agent> --model <model> <prompt>`)
-    dan otomatis berputar ke provider gratis berikutnya jika terkena HTTP 429 / Rate Limit.
+    Mengutamakan OpenCode CLI jika tersedia, dengan failover otomatis ke
+    Direct Native LLM API (Gemini/Groq/OpenRouter) saat CLI tidak ditemukan.
     """
 
     def __init__(
@@ -75,7 +264,6 @@ class FreeLLMRouter:
         pool = FREE_MODEL_POOLS.get(category, FREE_MODEL_POOLS["coding"])
         now = time.time()
         available = [m for m in pool if self._cooldown_until.get(m, 0.0) <= now]
-        # Jika semua sedang cooldown, tetap kembalikan seluruh pool sebagai fallback darurat
         return available if available else list(pool)
 
     @staticmethod
@@ -85,38 +273,59 @@ class FreeLLMRouter:
 
     @staticmethod
     def _default_opencode_runner(agent_name: str, model: str, prompt: str) -> Tuple[int, str]:
-        cmd = [
-            "opencode",
-            "run",
-            "--agent",
-            agent_name,
-            "--model",
-            model,
-            prompt,
-        ]
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=300,
-                check=False,
+        # 1. Coba OpenCode binary jika ada di PATH
+        opencode_bin = shutil.which("opencode")
+        if opencode_bin:
+            cmd = [
+                opencode_bin,
+                "run",
+                "--agent",
+                agent_name,
+                "--model",
+                model,
+                prompt,
+            ]
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    check=False,
+                )
+                combined = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
+                if proc.returncode == 0 and combined.strip():
+                    return 0, combined.strip()
+            except Exception:
+                pass
+
+        # 2. Panggilan API Langsung (Native Direct LLM Caller)
+        code, out = _execute_native_llm(agent_name, model, prompt)
+        if code == 0:
+            return 0, out
+
+        # 3. Fallback jika offline/simulasi tanpa API keys sama sekali
+        has_any_key = any(
+            os.getenv(k)
+            for k in (
+                "GEMINI_API_KEY",
+                "GROQ_API_KEY",
+                "CEREBRAS_API_KEY",
+                "OPENROUTER_API_KEY",
+                "MISTRAL_API_KEY",
             )
-            combined = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
-            return proc.returncode, combined.strip()
-        except FileNotFoundError:
-            # Mode simulasi/offline jika binary opencode belum terpasang di mesin lokal
+        )
+        if not has_any_key:
             return (
                 0,
-                f"[SIMULATED OpenCode] Agent=@{agent_name} | Model={model}\n"
-                f"Berhasil mengeksekusi instruksi: {prompt[:160]}",
+                f"⚠️ Kunci API belum diisi di file .env.\n"
+                f"Silakan isi minimal GEMINI_API_KEY (dari Google AI Studio) atau GROQ_API_KEY di .env "
+                f"agar @{agent_name} dapat menjawab pertanyaan teknis Anda.",
             )
 
+        return code, out
+
     def run_agent(self, agent_name: str, prompt: str) -> Dict[str, str]:
-        """
-        Menjalankan agen dengan rotasi otomatis lintas provider gratis jika kena rate-limit.
-        Mengembalikan dict: {"agent": ..., "model": ..., "output": ...}
-        """
         candidates = self.get_candidate_models(agent_name)
         last_error = ""
 
@@ -129,7 +338,6 @@ class FreeLLMRouter:
                     "output": output,
                 }
 
-            # Tandai model sedang cooldown dan rotasi ke provider gratis berikutnya
             self._cooldown_until[model] = time.time() + self.cooldown_seconds
             last_error = output or f"Exit code {code}"
             next_model = candidates[idx + 1] if idx + 1 < len(candidates) else "NONE"
