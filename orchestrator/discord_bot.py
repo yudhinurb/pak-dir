@@ -172,6 +172,7 @@ def run_discord_bot() -> None:
     @bot.command(name="ask")
     async def cmd_ask(ctx: Any, agent_name: str, *, question: str) -> None:
         clean_agent = agent_name.lstrip("@").lower()
+        print(f"[Discord] Diterima perintah: !ask @{clean_agent} '{question}'")
         await ctx.send(f"🔍 Menghubungi `@{clean_agent}`...")
         reply = await asyncio.to_thread(handler.handle_ask, clean_agent, question)
         await ctx.send(reply[:1950])

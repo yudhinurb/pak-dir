@@ -13,19 +13,18 @@ from orchestrator.state_db import StateDB
 
 FREE_MODEL_POOLS: Dict[str, List[str]] = {
     "reasoning": [
+        "google/gemini-2.5-flash",
+        "groq/llama-3.3-70b-versatile",
         "google/gemini-2.5-pro",
         "openrouter/deepseek/deepseek-r1:free",
-        "groq/llama-3.3-70b-versatile",
         "cerebras/llama-3.3-70b",
-        "google/gemini-2.5-flash",
     ],
     "coding": [
-        "mistral/codestral-latest",
-        "openrouter/qwen/qwen3-coder:free",
         "google/gemini-2.5-flash",
         "groq/llama-3.3-70b-versatile",
+        "mistral/codestral-latest",
+        "openrouter/qwen/qwen3-coder:free",
         "cerebras/llama-3.3-70b",
-        "openrouter/deepseek/deepseek-chat-v3-0324:free",
     ],
 }
 
@@ -330,14 +329,19 @@ class FreeLLMRouter:
         last_error = ""
 
         for idx, model in enumerate(candidates):
+            print(f"[LLM Router] Memanggil @{agent_name} dengan model: {model}...")
+            start_t = time.time()
             code, output = self.runner(agent_name, model, prompt)
+            duration = time.time() - start_t
             if code == 0 and not self._is_rate_limit_error(output):
+                print(f"[LLM Router] Sukses dari {model} untuk @{agent_name} ({duration:.2f}s)")
                 return {
                     "agent": agent_name,
                     "model": model,
                     "output": output,
                 }
 
+            print(f"[LLM Router] Model {model} terkendala/rate-limit ({output[:80]}). Merotasi ke provider berikutnya...")
             self._cooldown_until[model] = time.time() + self.cooldown_seconds
             last_error = output or f"Exit code {code}"
             next_model = candidates[idx + 1] if idx + 1 < len(candidates) else "NONE"
