@@ -11,6 +11,7 @@ FORBIDDEN_TARGETS = {
     "orchestrator",
     "opencode.json",
     "systemd",
+    "deploy",
     ".venv",
 }
 
