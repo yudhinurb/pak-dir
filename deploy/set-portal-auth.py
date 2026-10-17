@@ -109,6 +109,24 @@ def get_auth_status(caddyfile_path: Optional[Path] = None) -> Dict[str, Any]:
     }
 
 
+def _safe_write_caddyfile(path: Path, new_content: str) -> None:
+    """Menulis ke Caddyfile dengan fallback otomatis sudo tee jika terjadi PermissionError."""
+    try:
+        path.write_text(new_content, encoding="utf-8")
+    except PermissionError:
+        proc = subprocess.run(
+            ["sudo", "tee", str(path)],
+            input=new_content,
+            text=True,
+            capture_output=True,
+        )
+        if proc.returncode != 0:
+            raise PermissionError(
+                f"Izin ditolak saat menulis ke {path}. Silakan jalankan dengan sudo:\n"
+                f"sudo .venv/bin/python deploy/set-portal-auth.py ..."
+            )
+
+
 def enable_basic_auth(username: str, plaintext: str, caddyfile_path: Optional[Path] = None) -> Tuple[bool, str]:
     """Mengaktifkan proteksi password HTTP Basic Auth pada Caddyfile."""
     path = caddyfile_path or get_default_caddyfile()
@@ -140,7 +158,7 @@ def enable_basic_auth(username: str, plaintext: str, caddyfile_path: Optional[Pa
         else:
             new_content = content + f"\n{basicauth_block}\n"
 
-    path.write_text(new_content, encoding="utf-8")
+    _safe_write_caddyfile(path, new_content)
     reloaded = reload_caddy()
     msg = f"✅ HTTP Basic Auth berhasil DIAKTIFKAN untuk user '{clean_user}' pada {path}."
     if reloaded:
@@ -165,7 +183,7 @@ def disable_basic_auth(caddyfile_path: Optional[Path] = None) -> Tuple[bool, str
         comment_replacer,
         content,
     )
-    path.write_text(new_content, encoding="utf-8")
+    _safe_write_caddyfile(path, new_content)
     reloaded = reload_caddy()
     msg = f"⚠️ Basic Auth dinonaktifkan pada {path} (Portal sekarang terbuka untuk umum)."
     if reloaded:
@@ -187,7 +205,7 @@ def toggle_loopback_mode(private_only: bool, caddyfile_path: Optional[Path] = No
         new_content = re.sub(r"(?m)^\s*127\.0\.0\.1:8080\s*\{", ":8080 {", content)
         target = ":8080 (Public Interface)"
 
-    path.write_text(new_content, encoding="utf-8")
+    _safe_write_caddyfile(path, new_content)
     reloaded = reload_caddy()
     msg = f"🔒 Binding port berhasil diubah ke {target}."
     if reloaded:
