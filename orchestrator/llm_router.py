@@ -77,40 +77,44 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
     """
     system_prompt = _load_agent_system_prompt(agent_name)
 
-    # 1. Google Gemini (Google AI Studio)
+    # 1. Google Gemini (Google AI Studio via OpenAI-compatible endpoint)
     if "google" in model or "gemini" in model:
         api_key = _clean_key(os.getenv("GEMINI_API_KEY"))
         if not api_key:
             return 1, "⚠️ GEMINI_API_KEY belum diisi di file .env."
 
-        # Model candidates fallback for Google AI Studio
-        requested_model = model.split("/")[-1]
-        models_to_try = [requested_model]
-        if requested_model not in ("gemini-2.0-flash", "gemini-1.5-flash"):
-            models_to_try.extend(["gemini-2.0-flash", "gemini-1.5-flash"])
+        raw_model = model.split("/")[-1]
+        models_to_try = [raw_model]
+        for fallback in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+            if fallback not in models_to_try:
+                models_to_try.append(fallback)
 
+        url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         last_gemini_err = ""
         for m_name in models_to_try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={api_key}"
             payload = {
-                "systemInstruction": {"parts": [{"text": system_prompt}]},
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "model": m_name,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
             }
             try:
                 req = urllib.request.Request(
                     url,
                     data=json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {api_key}",
+                    },
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=45) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        if parts:
-                            return 0, parts[0].get("text", "")
-                    last_gemini_err = "Model Gemini tidak mengembalikan output teks."
+                    choices = data.get("choices", [])
+                    if choices:
+                        return 0, choices[0]["message"]["content"]
+                    last_gemini_err = "Gemini tidak mengembalikan teks output."
             except urllib.error.HTTPError as e:
                 err_body = e.read().decode("utf-8", errors="ignore")
                 last_gemini_err = f"Gemini HTTP {e.code} ({m_name}): {err_body}"
