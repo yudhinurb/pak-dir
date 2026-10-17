@@ -11,16 +11,20 @@ from typing import Callable, Dict, List, Optional, Tuple
 from orchestrator.state_db import StateDB
 
 
+# Universal high-speed free models supported across all free tiers
 FREE_MODEL_POOLS: Dict[str, List[str]] = {
     "reasoning": [
-        "google/gemini-2.5-flash",
+        "google/gemini-2.0-flash",
+        "google/gemini-1.5-flash",
         "groq/llama-3.3-70b-versatile",
-        "google/gemini-2.5-pro",
+        "google/gemini-1.5-pro",
+        "google/gemini-2.5-flash",
         "openrouter/deepseek/deepseek-r1:free",
         "cerebras/llama-3.3-70b",
     ],
     "coding": [
-        "google/gemini-2.5-flash",
+        "google/gemini-2.0-flash",
+        "google/gemini-1.5-flash",
         "groq/llama-3.3-70b-versatile",
         "mistral/codestral-latest",
         "openrouter/qwen/qwen3-coder:free",
@@ -47,6 +51,12 @@ RATE_LIMIT_SIGNALS = (
 )
 
 
+def _clean_key(val: Optional[str]) -> str:
+    if not val:
+        return ""
+    return val.strip().strip('"').strip("'")
+
+
 def _load_agent_system_prompt(agent_name: str) -> str:
     path = Path(".opencode/agent") / f"{agent_name}.md"
     if path.exists():
@@ -69,39 +79,53 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
 
     # 1. Google Gemini (Google AI Studio)
     if "google" in model or "gemini" in model:
-        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        api_key = _clean_key(os.getenv("GEMINI_API_KEY"))
         if not api_key:
-            return 1, "⚠️ GEMINI_API_KEY belum diisi di file .env. Silakan masukkan kunci API dari Google AI Studio."
-        model_name = model.split("/")[-1]
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-        payload = {
-            "systemInstruction": {"parts": [{"text": system_prompt}]},
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        }
-        try:
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        return 0, parts[0].get("text", "")
-                return 1, "Model Gemini tidak mengembalikan output teks."
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="ignore")
-            return e.code, f"Gemini HTTP {e.code}: {err_body}"
-        except Exception as e:
-            return 1, f"Error koneksi Gemini: {e}"
+            return 1, "⚠️ GEMINI_API_KEY belum diisi di file .env."
+
+        # Model candidates fallback for Google AI Studio
+        requested_model = model.split("/")[-1]
+        models_to_try = [requested_model]
+        if requested_model not in ("gemini-2.0-flash", "gemini-1.5-flash"):
+            models_to_try.extend(["gemini-2.0-flash", "gemini-1.5-flash"])
+
+        last_gemini_err = ""
+        for m_name in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={api_key}"
+            payload = {
+                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            }
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=45) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            return 0, parts[0].get("text", "")
+                    last_gemini_err = "Model Gemini tidak mengembalikan output teks."
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="ignore")
+                last_gemini_err = f"Gemini HTTP {e.code} ({m_name}): {err_body}"
+                print(f"[LLM Router] {last_gemini_err}")
+                if e.code == 429:
+                    return 429, last_gemini_err
+            except Exception as e:
+                last_gemini_err = f"Error koneksi Gemini ({m_name}): {e}"
+                print(f"[LLM Router] {last_gemini_err}")
+
+        return 1, last_gemini_err
 
     # 2. Groq Cloud
     if "groq" in model:
-        api_key = os.getenv("GROQ_API_KEY", "").strip()
+        api_key = _clean_key(os.getenv("GROQ_API_KEY"))
         if not api_key:
             return 1, "⚠️ GROQ_API_KEY belum diisi di file .env."
         model_name = model.split("/")[-1]
@@ -123,18 +147,20 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=45) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return 0, data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="ignore")
+            print(f"[LLM Router] Groq HTTP {e.code}: {err_body}")
             return e.code, f"Groq HTTP {e.code}: {err_body}"
         except Exception as e:
+            print(f"[LLM Router] Groq Error: {e}")
             return 1, f"Error koneksi Groq: {e}"
 
     # 3. Cerebras
     if "cerebras" in model:
-        api_key = os.getenv("CEREBRAS_API_KEY", "").strip()
+        api_key = _clean_key(os.getenv("CEREBRAS_API_KEY"))
         if not api_key:
             return 1, "⚠️ CEREBRAS_API_KEY belum diisi di file .env."
         model_name = model.split("/")[-1]
@@ -156,18 +182,19 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=45) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return 0, data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="ignore")
+            print(f"[LLM Router] Cerebras HTTP {e.code}: {err_body}")
             return e.code, f"Cerebras HTTP {e.code}: {err_body}"
         except Exception as e:
             return 1, f"Error koneksi Cerebras: {e}"
 
     # 4. OpenRouter
     if "openrouter" in model:
-        api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        api_key = _clean_key(os.getenv("OPENROUTER_API_KEY"))
         if not api_key:
             return 1, "⚠️ OPENROUTER_API_KEY belum diisi di file .env."
         clean_model = model.replace("openrouter/", "")
@@ -189,18 +216,19 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=45) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return 0, data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="ignore")
+            print(f"[LLM Router] OpenRouter HTTP {e.code}: {err_body}")
             return e.code, f"OpenRouter HTTP {e.code}: {err_body}"
         except Exception as e:
             return 1, f"Error koneksi OpenRouter: {e}"
 
     # 5. Mistral
     if "mistral" in model:
-        api_key = os.getenv("MISTRAL_API_KEY", "").strip()
+        api_key = _clean_key(os.getenv("MISTRAL_API_KEY"))
         if not api_key:
             return 1, "⚠️ MISTRAL_API_KEY belum diisi di file .env."
         clean_model = model.replace("mistral/", "")
@@ -222,11 +250,12 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=45) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return 0, data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="ignore")
+            print(f"[LLM Router] Mistral HTTP {e.code}: {err_body}")
             return e.code, f"Mistral HTTP {e.code}: {err_body}"
         except Exception as e:
             return 1, f"Error koneksi Mistral: {e}"
@@ -303,32 +332,32 @@ class FreeLLMRouter:
         if code == 0:
             return 0, out
 
-        # 3. Fallback jika offline/simulasi tanpa API keys sama sekali
-        has_any_key = any(
-            os.getenv(k)
-            for k in (
-                "GEMINI_API_KEY",
-                "GROQ_API_KEY",
-                "CEREBRAS_API_KEY",
-                "OPENROUTER_API_KEY",
-                "MISTRAL_API_KEY",
-            )
-        )
-        if not has_any_key:
-            return (
-                0,
-                f"⚠️ Kunci API belum diisi di file .env.\n"
-                f"Silakan isi minimal GEMINI_API_KEY (dari Google AI Studio) atau GROQ_API_KEY di .env "
-                f"agar @{agent_name} dapat menjawab pertanyaan teknis Anda.",
-            )
-
         return code, out
 
     def run_agent(self, agent_name: str, prompt: str) -> Dict[str, str]:
         candidates = self.get_candidate_models(agent_name)
         last_error = ""
 
-        for idx, model in enumerate(candidates):
+        # Prioritaskan hanya provider yang kunci API-nya tersedia di lingkungan
+        configured_models = []
+        unconfigured_models = []
+        for m in candidates:
+            if ("google" in m or "gemini" in m) and _clean_key(os.getenv("GEMINI_API_KEY")):
+                configured_models.append(m)
+            elif "groq" in m and _clean_key(os.getenv("GROQ_API_KEY")):
+                configured_models.append(m)
+            elif "cerebras" in m and _clean_key(os.getenv("CEREBRAS_API_KEY")):
+                configured_models.append(m)
+            elif "openrouter" in m and _clean_key(os.getenv("OPENROUTER_API_KEY")):
+                configured_models.append(m)
+            elif "mistral" in m and _clean_key(os.getenv("MISTRAL_API_KEY")):
+                configured_models.append(m)
+            else:
+                unconfigured_models.append(m)
+
+        active_pool = configured_models if configured_models else candidates
+
+        for idx, model in enumerate(active_pool):
             print(f"[LLM Router] Memanggil @{agent_name} dengan model: {model}...")
             start_t = time.time()
             code, output = self.runner(agent_name, model, prompt)
@@ -341,10 +370,10 @@ class FreeLLMRouter:
                     "output": output,
                 }
 
-            print(f"[LLM Router] Model {model} terkendala/rate-limit ({output[:80]}). Merotasi ke provider berikutnya...")
+            print(f"[LLM Router] Model {model} terkendala ({output[:100]}). Merotasi ke provider berikutnya...")
             self._cooldown_until[model] = time.time() + self.cooldown_seconds
             last_error = output or f"Exit code {code}"
-            next_model = candidates[idx + 1] if idx + 1 < len(candidates) else "NONE"
+            next_model = active_pool[idx + 1] if idx + 1 < len(active_pool) else "NONE"
             self.state_db.log_llm_rotation(
                 agent_name=agent_name,
                 failed_model=model,
@@ -353,5 +382,5 @@ class FreeLLMRouter:
             )
 
         raise RuntimeError(
-            f"Seluruh provider gratis untuk @{agent_name} sedang penuh/rate-limited. Error terakhir: {last_error}"
+            f"Gagal memanggil model untuk @{agent_name}. Catatan error: {last_error}"
         )

@@ -174,8 +174,12 @@ def run_discord_bot() -> None:
         clean_agent = agent_name.lstrip("@").lower()
         print(f"[Discord] Diterima perintah: !ask @{clean_agent} '{question}'")
         await ctx.send(f"🔍 Menghubungi `@{clean_agent}`...")
-        reply = await asyncio.to_thread(handler.handle_ask, clean_agent, question)
-        await ctx.send(reply[:1950])
+        try:
+            reply = await asyncio.to_thread(handler.handle_ask, clean_agent, question)
+            await ctx.send(reply[:1950])
+        except Exception as exc:
+            print(f"[Discord Error] {exc}")
+            await ctx.send(f"⚠️ Terjadi kendala saat memanggil `@{clean_agent}`:\n```{exc}```")
 
     @bot.command(name="hire")
     async def cmd_hire(ctx: Any, name: str, *, spec: str) -> None:
@@ -202,7 +206,11 @@ def run_discord_bot() -> None:
         def send_progress(msg: str) -> None:
             asyncio.run_coroutine_threadsafe(ctx.send(msg[:1950]), loop)
 
-        await asyncio.to_thread(handler.supervisor.execute_cto_mandate, instruction, send_progress)
+        try:
+            await asyncio.to_thread(handler.supervisor.execute_cto_mandate, instruction, send_progress)
+        except Exception as exc:
+            print(f"[Discord Error Task] {exc}")
+            await ctx.send(f"⚠️ Eksekusi task gagal:\n```{exc}```")
 
     @bot.command(name="pending")
     async def cmd_pending(ctx: Any) -> None:
