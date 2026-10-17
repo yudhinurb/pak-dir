@@ -2,6 +2,9 @@ import argparse
 import sys
 from orchestrator.discord_bot import CTOCommandHandler, get_server_health_report
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 def print_banner() -> None:
     print(
@@ -34,11 +37,13 @@ def interactive_repl() -> None:
             print(
                 "\nPerintah yang Tersedia:\n"
                 "  !agents                 - Tampilkan daftar karyawan AI aktif\n"
+                "  !status                 - Cek status real-time agen dan task aktif\n"
                 "  !ask <agent> <tanya>    - Tanya langsung ke agen tertentu (misal: !ask architect ...)\n"
                 "  !task <instruksi>       - Berikan inisiatif fitur ke @em (Full Pipeline)\n"
                 "  !pending                - Lihat daftar task yang menunggu approval CTO\n"
                 "  !approve <id> [catatan] - Setujui deployment task\n"
                 "  !reject <id> <alasan>   - Tolak task & minta revisi\n"
+                "  !retry [id] [catatan]   - Lanjutkan atau revisi task yang berhenti/ditolak\n"
                 "  !hire <nama> <sop>      - Rekrut agen spesialis baru\n"
                 "  !specialize <nama> <fokus> - Pertajam SOP agen yang ada\n"
                 "  !health                 - Cek telemetri kesehatan host\n"
@@ -121,6 +126,35 @@ def interactive_repl() -> None:
                 print(f"🛑 Task #{task_id} ditolak: {res.get('status')}")
             except Exception as e:
                 print(f"❌ Error: {e}")
+        elif cmd in ("!retry", "!resume", "!lanjut", "!revisi"):
+            task_id = None
+            note = ""
+            if args:
+                parts = args.split(maxsplit=1)
+                if parts[0].isdigit():
+                    task_id = int(parts[0])
+                    note = parts[1].strip() if len(parts) > 1 else ""
+                else:
+                    note = args
+            if task_id is None:
+                active = handler.state_db.get_active_tasks()
+                if active:
+                    task_id = int(active[0]["id"])
+                else:
+                    recent = handler.state_db.get_recent_tasks(limit=1)
+                    if recent:
+                        task_id = int(recent[0]["id"])
+            if task_id is None:
+                print("⚠️ Tidak ada task yang ditemukan untuk di-retry.")
+                continue
+            print(f"🔄 Melanjutkan Task #{task_id}...")
+            try:
+                res = handler.supervisor.resume_task(task_id, note, progress_callback=print)
+                print(f"\nStatus Terakhir Task #{task_id}: {res.get('status')}")
+            except Exception as e:
+                print(f"❌ Error: {e}")
+        elif cmd in ("!status", "!tasks"):
+            print(handler.handle_status())
         else:
             print(f"Perintah '{cmd}' tidak dikenali. Ketik 'help' untuk daftar perintah.")
 
@@ -133,6 +167,7 @@ def main() -> None:
     sub.add_parser("agents", help="Daftar karyawan AI aktif")
     sub.add_parser("health", help="Telemetri kesehatan node")
     sub.add_parser("pending", help="Daftar task menunggu approval")
+    sub.add_parser("status", help="Status real-time tugas dan tim AI")
 
     ask_p = sub.add_parser("ask", help="Tanya langsung ke agen")
     ask_p.add_argument("agent", help="Nama agen (misal: architect)")
@@ -145,6 +180,10 @@ def main() -> None:
     app_p.add_argument("task_id", type=int, help="ID Task")
     app_p.add_argument("--note", default="Approved by CTO", help="Catatan persetujuan")
 
+    retry_p = sub.add_parser("retry", help="Lanjutkan atau revisi task yang berhenti/ditolak")
+    retry_p.add_argument("task_id", type=int, nargs="?", default=None, help="ID Task (opsional)")
+    retry_p.add_argument("--note", default="", help="Catatan revisi / arahan baru")
+
     args = parser.parse_args()
     handler = CTOCommandHandler(".")
 
@@ -156,12 +195,21 @@ def main() -> None:
         print(get_server_health_report())
     elif args.subcommand == "pending":
         print(handler.handle_pending())
+    elif args.subcommand == "status":
+        print(handler.handle_status())
     elif args.subcommand == "ask":
         print(handler.handle_ask(args.agent, args.question))
     elif args.subcommand == "task":
         handler.supervisor.execute_cto_mandate(args.instruction, progress_callback=print)
     elif args.subcommand == "approve":
         print(handler.supervisor.approve_task(args.task_id, args.note))
+    elif args.subcommand == "retry":
+        task_id = args.task_id
+        if task_id is None:
+            active = handler.state_db.get_active_tasks()
+            task_id = int(active[0]["id"]) if active else 1
+        res = handler.supervisor.resume_task(task_id, args.note, progress_callback=print)
+        print(f"\nStatus Terakhir Task #{task_id}: {res.get('status')}")
 
 
 if __name__ == "__main__":

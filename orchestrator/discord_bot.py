@@ -591,19 +591,56 @@ def run_discord_bot() -> None:
         await send_split_message(ctx, msg)
 
     @bot.command(name="retry", aliases=["resume", "lanjut", "revisi"])
-    async def cmd_retry(ctx: Any, task_id: int, *, note: Optional[str] = None) -> None:
-        """Melanjutkan pengerjaan task yang berhenti atau merevisi task yang ditolak."""
+    async def cmd_retry(ctx: Any, *, args: Optional[str] = None) -> None:
+        """
+        Melanjutkan pengerjaan task yang berhenti atau merevisi task yang ditolak.
+        Mendukung berbagai format pemanggilan:
+        1. !retry (otomatis mengambil task terakhir yang aktif/berhenti)
+        2. !retry <task_id> (misal: !retry 1)
+        3. !retry <task_id> <catatan revisi> (misal: !retry 1 tolong perbaiki navbar)
+        4. !retry <catatan revisi> (misal: !retry perbaiki tampilan tombol)
+        """
+        raw_args = (args or "").strip()
+        task_id: Optional[int] = None
+        note: str = ""
+
+        if raw_args:
+            parts = raw_args.split(maxsplit=1)
+            if parts[0].isdigit():
+                task_id = int(parts[0])
+                note = parts[1].strip() if len(parts) > 1 else ""
+            else:
+                note = raw_args
+
+        if task_id is None:
+            active = handler.state_db.get_active_tasks()
+            if active:
+                task_id = int(active[0]["id"])
+            else:
+                recent = handler.state_db.get_recent_tasks(limit=1)
+                if recent:
+                    task_id = int(recent[0]["id"])
+
+        if task_id is None:
+            await send_split_message(
+                ctx,
+                "⚠️ Tidak ada task yang ditemukan di sistem. Silakan buat task baru dengan `!task <instruksi>`.",
+            )
+            return
+
         loop = asyncio.get_running_loop()
 
         def send_progress(msg: str) -> None:
             asyncio.run_coroutine_threadsafe(send_split_message(ctx, msg), loop)
 
         try:
-            await ctx.send(f"🔄 Mengaktifkan kembali tim AI untuk melanjutkan Task #{task_id}...")
+            target_task = handler.state_db.get_task(task_id)
+            title = target_task.get("title", f"#{task_id}") if target_task else f"#{task_id}"
+            await ctx.send(f"🔄 Mengaktifkan kembali tim AI untuk melanjutkan Task #{task_id}: *{title}*...")
             await asyncio.to_thread(
                 handler.supervisor.resume_task,
                 task_id,
-                note or "",
+                note,
                 send_progress,
             )
         except Exception as exc:
