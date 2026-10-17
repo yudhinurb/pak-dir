@@ -3,18 +3,75 @@ import os
 import platform
 import shutil
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from orchestrator.agent_factory import AgentFactory
 from orchestrator.llm_router import FreeLLMRouter, FREE_MODEL_POOLS
 from orchestrator.state_db import StateDB
 from orchestrator.supervisor import EMSupervisor
+from orchestrator.system_context import (
+    get_listening_ports,
+    get_firewall_status,
+    get_active_services,
+    get_git_status,
+    execute_server_command,
+)
+
+
+async def send_split_message(ctx: Any, text: str, max_chunk_size: int = 1850) -> None:
+    """
+    Mengirim pesan ke Discord dengan memecah pesan panjang menjadi beberapa bagian
+    agar tidak terpotong oleh batas limit 2000 karakter Discord dan memastikan
+    blok kode Markdown (```) tidak rusak di tengah.
+    """
+    if not text:
+        return
+
+    text = str(text).strip()
+    if len(text) <= max_chunk_size:
+        await ctx.send(text)
+        return
+
+    chunks: List[str] = []
+    remaining = text
+
+    while len(remaining) > max_chunk_size:
+        # Cari titik pemisah terbaik di batas baris baru
+        split_idx = remaining.rfind("\n", 0, max_chunk_size)
+        if split_idx == -1 or split_idx < max_chunk_size // 3:
+            # Jika tidak ada baris baru yang pas, cari spasi
+            split_idx = remaining.rfind(" ", 0, max_chunk_size)
+        if split_idx == -1:
+            split_idx = max_chunk_size
+
+        chunk = remaining[:split_idx].rstrip()
+        remaining = remaining[split_idx:].lstrip()
+
+        # Periksa apakah chunk ini memotong blok kode Markdown yang belum ditutup
+        fence_count = chunk.count("```")
+        if fence_count % 2 != 0:
+            # Blok kode terbuka tapi belum tertutup di chunk ini -> tutup di sini, buka kembali di chunk berikutnya
+            chunk += "\n```"
+            remaining = "```\n" + remaining
+
+        if chunk:
+            chunks.append(chunk)
+
+    if remaining:
+        chunks.append(remaining)
+
+    total_chunks = len(chunks)
+    for idx, c in enumerate(chunks):
+        if total_chunks > 1 and idx > 0:
+            header = f"*(Lanjutan {idx + 1}/{total_chunks})*\n"
+            await ctx.send(header + c)
+        else:
+            await ctx.send(c)
 
 
 def get_server_health_report() -> str:
     """
-    Mengambil metrik kesehatan server (RAM, Swap, Disk, OS) secara ringan.
-    Kompatibel di Linux maupun Windows / macOS.
+    Mengambil metrik kesehatan server (RAM, Swap, Disk, Port, Layanan, Git) secara ringan.
     """
     total_disk, used_disk, free_disk = shutil.disk_usage(".")
     disk_info = (
@@ -53,14 +110,20 @@ def get_server_health_report() -> str:
             ram_info = f"{used_m} MB / {total_m} MB (Tersedia: {avail_m} MB)"
             swap_info = f"{swap_total - swap_free} MB / {swap_total} MB"
 
+    git_info = get_git_status()
+    services_info = get_active_services()
+
     return (
-        "🖥️ **Status Telemetri & Kesehatan Node CTO**\n"
+        "🖥️ **Status Telemetri & Kesehatan Node CTO (PakDir)**\n"
         f"- **OS / Platform:** `{platform.system()} {platform.release()}`\n"
+        f"- **Git Repository:** {git_info}\n"
+        f"- **Layanan Kunci:** `{services_info}`\n"
         f"- **Pemakaian RAM:** `{ram_info}`\n"
         f"- **Pemakaian Swap:** `{swap_info}`\n"
         f"- **Pemakaian Disk:** `{disk_info}`\n"
         f"- **Pool Reasoning Models:** `{', '.join(FREE_MODEL_POOLS['reasoning'][:3])}...`\n"
-        f"- **Pool Coding Models:** `{', '.join(FREE_MODEL_POOLS['coding'][:3])}...`"
+        f"- **Pool Coding Models:** `{', '.join(FREE_MODEL_POOLS['coding'][:3])}...`\n"
+        "*Ketik `!ports` untuk rincian port networking atau `!agents` untuk status tim AI.*"
     )
 
 
@@ -163,11 +226,33 @@ def run_discord_bot() -> None:
 
     @bot.command(name="health")
     async def cmd_health(ctx: Any) -> None:
-        await ctx.send(get_server_health_report())
+        await send_split_message(ctx, get_server_health_report())
+
+    @bot.command(name="ports")
+    async def cmd_ports(ctx: Any) -> None:
+        """Cek port listening & firewall secara langsung tanpa menunggu LLM."""
+        ports = get_listening_ports()
+        fw = get_firewall_status()
+        report = (
+            "🔌 **Status Port & Jaringan Server (Live)**:\n"
+            f"```\n{ports}\n```\n"
+            f"🛡️ **Firewall (UFW)**:\n`{fw}`"
+        )
+        await send_split_message(ctx, report)
+
+    @bot.command(name="exec")
+    async def cmd_exec(ctx: Any, *, command: str) -> None:
+        """Menjalankan perintah terminal di host langsung atas instruksi CTO."""
+        clean_cmd = command.strip().strip("`")
+        print(f"[Discord Exec] Instruksi terminal dari CTO: '{clean_cmd}'", flush=True)
+        await ctx.send(f"⚙️ Mengeksekusi di server: `{clean_cmd}`...")
+        out = await asyncio.to_thread(execute_server_command, clean_cmd)
+        msg = f"💻 **Hasil Eksekusi `{clean_cmd}`**:\n```bash\n{out}\n```"
+        await send_split_message(ctx, msg)
 
     @bot.command(name="agents")
     async def cmd_agents(ctx: Any) -> None:
-        await ctx.send(handler.handle_agents_list())
+        await send_split_message(ctx, handler.handle_agents_list())
 
     @bot.command(name="ask")
     async def cmd_ask(ctx: Any, agent_name: str, *, question: str) -> None:
@@ -176,14 +261,13 @@ def run_discord_bot() -> None:
         await ctx.send(f"🔍 Menghubungi `@{clean_agent}`...")
         try:
             reply = await asyncio.to_thread(handler.handle_ask, clean_agent, question)
-            await ctx.send(reply[:1950])
+            await send_split_message(ctx, reply)
         except Exception as exc:
             print(f"[Discord Error] {exc}", flush=True)
             await ctx.send(f"⚠️ Terjadi kendala saat memanggil `@{clean_agent}`:\n```{exc}```")
 
     @bot.command(name="hire")
     async def cmd_hire(ctx: Any, name: str, *, spec: str) -> None:
-        # Format cepat: !hire <nama> <deskripsi dan SOP>
         reply = await asyncio.to_thread(
             handler.handle_hire,
             name=name,
@@ -192,34 +276,35 @@ def run_discord_bot() -> None:
             sop=spec,
             tools="write,edit,bash",
         )
-        await ctx.send(reply)
+        await send_split_message(ctx, reply)
 
     @bot.command(name="specialize")
     async def cmd_specialize(ctx: Any, name: str, *, focus: str) -> None:
         reply = await asyncio.to_thread(handler.handle_specialize, name.lstrip("@"), focus)
-        await ctx.send(reply)
+        await send_split_message(ctx, reply)
 
     @bot.command(name="task")
     async def cmd_task(ctx: Any, *, instruction: str) -> None:
         loop = asyncio.get_running_loop()
 
         def send_progress(msg: str) -> None:
-            asyncio.run_coroutine_threadsafe(ctx.send(msg[:1950]), loop)
+            asyncio.run_coroutine_threadsafe(send_split_message(ctx, msg), loop)
 
         try:
             await asyncio.to_thread(handler.supervisor.execute_cto_mandate, instruction, send_progress)
         except Exception as exc:
-            print(f"[Discord Error Task] {exc}")
+            print(f"[Discord Error Task] {exc}", flush=True)
             await ctx.send(f"⚠️ Eksekusi task gagal:\n```{exc}```")
 
     @bot.command(name="pending")
     async def cmd_pending(ctx: Any) -> None:
-        await ctx.send(handler.handle_pending())
+        await send_split_message(ctx, handler.handle_pending())
 
     @bot.command(name="approve")
     async def cmd_approve(ctx: Any, task_id: int, *, note: str = "Approved by CTO via Discord") -> None:
         task = await asyncio.to_thread(handler.supervisor.approve_task, task_id, note)
-        await ctx.send(
+        await send_split_message(
+            ctx,
             f"🚀 **Task #{task_id} Approved & Deployed!**\n"
             f"Branch `{task['branch_name']}` telah di-merge ke `main`."
         )
@@ -227,7 +312,7 @@ def run_discord_bot() -> None:
     @bot.command(name="reject")
     async def cmd_reject(ctx: Any, task_id: int, *, reason: str) -> None:
         await asyncio.to_thread(handler.supervisor.reject_task, task_id, reason)
-        await ctx.send(f"🛑 **Task #{task_id} Ditolak CTO.** Catatan revisi disimpan: *{reason}*")
+        await send_split_message(ctx, f"🛑 **Task #{task_id} Ditolak CTO.** Catatan revisi disimpan: *{reason}*")
 
     bot.run(token)
 

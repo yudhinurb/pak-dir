@@ -62,15 +62,35 @@ def _clean_key(val: Optional[str]) -> str:
 
 def _load_agent_system_prompt(agent_name: str) -> str:
     path = Path(".opencode/agent") / f"{agent_name}.md"
+    base_prompt = ""
     if path.exists():
         try:
-            return path.read_text(encoding="utf-8")
+            base_prompt = path.read_text(encoding="utf-8")
         except Exception:
             pass
-    return (
-        f"You are @{agent_name}, an expert AI engineering professional working for the CTO.\n"
-        "Always give structured, professional, production-grade responses."
+    if not base_prompt:
+        base_prompt = (
+            f"You are @{agent_name}, an expert AI engineering professional working for the CTO.\n"
+            "Always give structured, professional, production-grade responses."
+        )
+
+    try:
+        from orchestrator.system_context import get_live_server_context
+        live_context = get_live_server_context()
+    except Exception:
+        live_context = ""
+
+    anti_laziness_directive = (
+        "\n\n--- PROTOKOL MUTLAK AI ENGINEER (ANTI-LAZINESS PROTOCOL) ---\n"
+        "1. Anda adalah AI Engineer yang bertugas langsung di dalam server VPS host CTO.\n"
+        "2. PANTANGAN MUTLAK: DILARANG KERAS menyuruh CTO untuk menjalankan perintah shell/terminal sendiri "
+        "(contoh terlarang: 'Silakan Anda jalankan netstat -tuln', 'Buka terminal Anda dan ketik...', 'Anda bisa mengecek dengan...').\n"
+        "3. Gunakan data telemetri, port, status layanan, dan info git yang tertera di bawah ini untuk langsung "
+        "memberikan jawaban tuntas, faktual, dan konkrit.\n"
+        "4. Bila CTO bertanya seputar port, resource, atau status sistem, laporkan hasil analisa Anda secara langsung.\n\n"
+        f"{live_context}\n"
     )
+    return base_prompt + anti_laziness_directive
 
 
 def _call_gemini_endpoint(model_name: str, system_prompt: str, prompt: str, api_key: str) -> Tuple[int, str]:
@@ -82,6 +102,7 @@ def _call_gemini_endpoint(model_name: str, system_prompt: str, prompt: str, api_
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
+        "max_tokens": 4096,
     }
     try:
         req = urllib.request.Request(
@@ -111,7 +132,10 @@ def _call_gemini_endpoint(model_name: str, system_prompt: str, prompt: str, api_
     payload_native = {
         "contents": [
             {"role": "user", "parts": [{"text": f"SYSTEM INSTRUCTIONS:\n{system_prompt}\n\nUSER PROMPT:\n{prompt}"}]}
-        ]
+        ],
+        "generationConfig": {
+            "maxOutputTokens": 4096,
+        },
     }
     try:
         req = urllib.request.Request(
@@ -182,6 +206,7 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
+            "max_tokens": 4096,
         }
         try:
             req = urllib.request.Request(
@@ -217,6 +242,7 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
+            "max_tokens": 4096,
         }
         try:
             req = urllib.request.Request(
@@ -251,6 +277,7 @@ def _execute_native_llm(agent_name: str, model: str, prompt: str) -> Tuple[int, 
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
+            "max_tokens": 4096,
         }
         try:
             req = urllib.request.Request(

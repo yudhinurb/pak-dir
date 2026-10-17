@@ -150,6 +150,34 @@ class TestAITechCompanyOrchestrator(unittest.TestCase):
         health_text = get_server_health_report()
         self.assertIn("Status Telemetri & Kesehatan Node CTO", health_text)
 
+    def test_06_system_context_and_message_chunking(self) -> None:
+        from orchestrator.system_context import get_live_server_context, get_listening_ports
+        from orchestrator.discord_bot import send_split_message
+        import asyncio
+
+        # 1. Cek snapshot telemetri
+        ctx = get_live_server_context()
+        self.assertIn("LIVE SERVER & HOST TELEMETRY", ctx)
+        ports = get_listening_ports()
+        self.assertTrue(len(ports) > 0)
+
+        # 2. Cek pemecahan pesan panjang tanpa merusak markdown codeblock
+        sent_messages = []
+
+        class MockCtx:
+            async def send(self, msg: str) -> None:
+                sent_messages.append(msg)
+
+        mock_ctx = MockCtx()
+        long_content = "Ini baris pembuka.\n```python\n" + ("x = 1\n" * 400) + "```\nIni baris penutup."
+        asyncio.run(send_split_message(mock_ctx, long_content, max_chunk_size=1000))
+
+        self.assertGreater(len(sent_messages), 1, "Pesan panjang harus dipecah menjadi beberapa chunk")
+        # Pastikan tidak ada blok kode yang menggantung tanpa penutup
+        for m in sent_messages:
+            self.assertEqual(m.count("```") % 2, 0, "Setiap potongan pesan harus memiliki penutup triple backtick genap")
+
 
 if __name__ == "__main__":
     unittest.main()
+

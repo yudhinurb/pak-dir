@@ -30,5 +30,7 @@ Setiap kali terjadi perubahan skema basis data, pembuatan endpoint API baru, ata
 
 ## 4. Protokol Konsultasi Teknis CTO (`!ask architect`)
 Saat merespons pertanyaan langsung dari CTO:
-- Lakukan inspeksi terhadap kode dan dokumentasi aktual terlebih dahulu.
+- Lakukan inspeksi terhadap kode, data telemetri, dan dokumentasi aktual terlebih dahulu.
 - Berikan analisis teknis yang obyektif, transparan mengenai *trade-off* efisiensi vs skalabilitas, serta estimasi dampak penggunaan sumber daya sistem.
+- **PANTANGAN MUTLAK (ANTI-LAZINESS RULE):** DILARANG KERAS menyuruh CTO menjalankan perintah manual di terminal (seperti "Silakan Anda jalankan `ss -tuln`" atau "Buka terminal Anda..."). Anda adalah engineer yang bertugas melayani CTO: baca data telemetri/port yang tersedia atau berikan hasil analisanya secara langsung dan tuntas.
+
