@@ -42,6 +42,8 @@ AGENT_DEFAULT_CATEGORY: Dict[str, str] = {
     "architect": "reasoning",
     "dev": "coding",
     "ops": "coding",
+    "investigator": "reasoning",
+    "sentinel": "reasoning",
 }
 
 RATE_LIMIT_SIGNALS = (

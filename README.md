@@ -1,33 +1,32 @@
 <p align="center">
-  <h1 align="center">🏢 PakDir</h1>
+  <h1 align="center">🏢 PakDir v2 (Sentinel Edition)</h1>
   <p align="center">
-    <strong>The Autonomous AI Engineering Organization & CTO Control Plane</strong><br>
-    <em>Govern a self-evolving, multi-agent engineering department with strict human-in-the-loop oversight.</em>
+    <strong>The Autonomous 24/7 AI SysAdmin, Watchdog & Delivery Gatekeeper</strong><br>
+    <em>Govern, monitor, investigate, and deliver hotfixes to your budget VPS directly from Discord.</em>
   </p>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python Version"></a>
-  <a href="https://opencode.ai"><img src="https://img.shields.io/badge/runtime-OpenCode-black" alt="OpenCode Runtime"></a>
-  <a href="#resource-aware-architecture"><img src="https://img.shields.io/badge/control%20plane%20overhead-%3C250MB-success" alt="RAM Overhead"></a>
+  <a href="#resource-aware-architecture"><img src="https://img.shields.io/badge/control%20plane%20overhead-%3C150MB-success" alt="RAM Overhead"></a>
   <a href="#llm-router"><img src="https://img.shields.io/badge/token%20cost-%240%20(multi--provider%20free)-brightgreen" alt="Token Cost"></a>
+  <a href="#test-suite"><img src="https://img.shields.io/badge/tests-38%20passed-brightgreen" alt="Test Suite"></a>
 </p>
 
 ---
 
 ## Overview
 
-**PakDir** is an open-source control plane and multi-agent orchestration framework designed for solo founders, technical entrepreneurs, and engineering leaders. It empowers a single person to act as an executive **Chief Technology Officer (CTO)** governing an autonomous software engineering organization powered by AI agents.
+**PakDir v2 (Sentinel Edition)** is a headless, resource-aware autonomous **AI SysAdmin, Watchdog, and Delivery Gatekeeper** built specifically for solo founders, independent hackers, and technical leaders managing production VPS environments ($3–$6/month, 1GB–2GB RAM).
 
-Unlike traditional multi-agent systems that demand heavy GPU infrastructure or consume gigabytes of idle resident memory, PakDir is engineered with **Resource-Aware Architecture**:
-- **Minimal Control Plane Footprint:** The entire management layer operates under **250MB resident memory**, leaving the vast majority of host resources for your actual application workloads.
-- **Environment Agnostic:** Runs identically across local developer environments (macOS, Linux, Windows), entry-level cloud VPS instances (tested on 2GB RAM + 4GB Swap), dedicated bare-metal, and containerized clusters.
-- **Zero-Downtime Multi-Provider LLM Routing:** Prioritized by default on **Google Gemini 3.5 Flash-Lite** with seamless cascade failover across Google AI Studio, Groq, Cerebras, Mistral Codestral, and OpenRouter free tiers.
-- **Strict Human-in-the-Loop Governance:** AI agents operate on isolated feature branches and cannot deploy to production without explicit CTO authorization.
-- **Live Host Telemetry & Anti-Laziness Protocol:** Agents receive real-time host inspection snapshots (ports, firewall, services, git) and are strictly forbidden from telling the CTO to run manual terminal commands.
-- **Native Document & File Ingestion:** Upload `.pdf` documents, source code, SQL schemas, or error logs directly through Discord chat for immediate analysis.
-- **Hardened Security & Gated Architecture Portal:** Built-in Bcrypt authentication and security headers protect your architectural blueprints from public scraping.
+Instead of forcing you to open a terminal or SSH into your server in the middle of the night, PakDir acts as an uncompromising **24/7 Watchdog and DevOps Assistant** inside your private Discord:
+- **Proactive Anomaly Alerts:** Constantly monitors RAM (>85%), Swap, Disk space (>88%), and critical systemd services (`caddy`, databases, custom apps) in the background. Pushes instant Discord alerts before fatal OOM crashes occur.
+- **Smart Log Triage & Root Cause Analysis (`!investigate`):** Analyzes `journalctl` logs or uploaded `error.log` / `.sql` / stack traces to pinpoint the exact failure line and concrete remediation steps without telling you to run manual terminal commands.
+- **Safe Hotfix & Git Gatekeeper (`!hotfix`):** Prepares targeted patches and configuration updates in isolated Git branches, verifies syntax, and enforces human-in-the-loop authorization (`!approve`) before merging to `main` and reloading services.
+- **Instant SysAdmin Commands:** Inspect top RAM-consuming processes (`!top`), view live service logs (`!logs <svc>`), safely restart failed units (`!restart <svc>`), and vacuum old logs (`!clean`) from your mobile device.
+- **Zero-Cost Multi-Provider Inference:** Powered by Google Gemini 3.5 Flash-Lite with millisecond failover across Groq (Llama 3.3 70B), Cerebras, and OpenRouter upon HTTP 429 quota limits.
+- **Ultra-Low Memory Footprint (<150MB):** Operates on pure Python `asyncio` and SQLite WAL, leaving virtually all host RAM for your actual web applications and databases.
 
 ```mermaid
 flowchart LR
@@ -172,21 +171,25 @@ Connect your private Discord workspace to govern your AI engineering team:
 
 | Category | Command | Description |
 | :--- | :--- | :--- |
-| **Team & Advisory** | `!ask <@agent> [query]` | Consult an AI engineer directly. **Supports attaching `.pdf`, `.py`, `.sql`, `.json`, `.txt`, `.log` files!** |
+| **🐕 SysAdmin & Watchdog** | `!status` *(or `!tasks`)* | **Live monitoring:** Real-time host RAM/Swap health, active Sentinel alerts, and pending tasks. |
+| | `!top [limit]` | Display top RAM-consuming processes directly on host (`psutil` / `ps` / `tasklist`). |
+| | `!logs <service> [lines]` | Inspect live non-blocking `journalctl` service logs (e.g., `!logs caddy 50`). |
+| | `!investigate <target>` | **Root Cause Analysis (RCA):** Deep diagnosis of service crash or attached log file via `@investigator`. |
+| | `!restart <service>` | Safely restart a failed systemd unit and verify active status automatically. |
+| | `!clean` | Vacuum old journald logs (>7d), purge temporary uploads, and compact SQLite WAL database. |
+| | `!health` | System telemetry dashboard (RAM, Swap, Disk, Core Services, Git commit). |
+| | `!security` *(or `!sec`)* | Real-time security posture audit & Portal Port 8080 Bcrypt lock status. |
+| | `!ports` | Instant listening port inspection (`ss -tuln`) and UFW firewall status. |
+| | `!exec <command>` | Execute shell commands directly on the host from mobile Discord. |
+| **🛡️ Delivery & Hotfix** | `!hotfix <directive>` | Launch isolated hotfix branch (`hotfix/*`), apply targeted file patch, run QA, and queue for approval. |
+| | `!pending` | View deliverables, hotfixes, and Pull Requests awaiting executive approval. |
+| | `!approve <task_id> [note]` | Grant executive authorization to merge branch to `main` with verified Git commit hash and deploy. |
+| | `!reject <task_id> <reason>` | Reject task/hotfix and request revisions. |
+| | `!taskinfo <task_id>` | Inspect full deliverable dossier (PRD, design, patch code, QA test log). |
+| **💬 Team & Advisory** | `!ask <@agent> [query]` | Consult an AI engineer directly. **Supports attaching `.pdf`, `.py`, `.sql`, `.json`, `.txt`, `.log` files!** |
 | | `!agents` | Display the active roster of AI personnel and their tool permissions. |
 | | `!hire <name> <spec>` | Dynamically recruit and provision a new specialist subagent. |
 | | `!specialize <@agent> <focus>` | Refine or specialize the operational SOP of an existing agent. |
-| **Mandates & Delivery** | `!task [directive]` | Launch an automated end-to-end sprint (PM $\rightarrow$ Architect $\rightarrow$ Dev $\rightarrow$ Ops $\rightarrow$ Auto-Healing). **Supports attaching PRD / spec documents!** |
-| | `!status` *(or `!tasks`)* | **Live monitoring:** Check running tasks, current agent stage, waiting approvals, and recent merges. |
-| | `!activity` *(or `!log`)* | **Real-time timeline:** View the chronological event log of subagent actions with exact timestamps. |
-| | `!taskinfo <task_id>` | **Proof of work:** Inspect complete deliverables for a task (PRD, system design, source code, QA test log). |
-| | `!pending` | View deliverables and Pull Requests awaiting executive approval. |
-| | `!approve <task_id> [note]` | Grant executive authorization to merge branch to `main` with verified Git commit hash and deploy. |
-| | `!reject <task_id> <reason>` | Reject task and request revisions from the engineering team. |
-| **DevOps & Security** | `!health` | Inspect real-time server telemetry (RAM, Swap, Disk, Services, Git). |
-| | `!security` *(or `!sec`)* | Real-time security posture audit & Portal Port 8080 lock status. |
-| | `!ports` | Instant listening port inspection (`ss -tuln`) and UFW firewall status. |
-| | `!exec <command>` | Execute shell commands directly on the host from mobile Discord. |
 | | `!help` *(or `!menu`)* | Display the interactive executive command guide. |
 
 ---

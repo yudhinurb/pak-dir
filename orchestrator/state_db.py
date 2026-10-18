@@ -64,6 +64,17 @@ class StateDB:
                     reason TEXT NOT NULL,
                     created_at REAL NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS incidents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    alert_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    details TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'OPEN',
+                    created_at REAL NOT NULL,
+                    resolved_at REAL,
+                    resolution_notes TEXT DEFAULT ''
+                );
                 """
             )
             # Migrasi tabel jika kolom baru belum ada di database lama
@@ -207,3 +218,54 @@ class StateDB:
                 "SELECT * FROM agent_events ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def create_incident(self, alert_type: str, severity: str, details: str) -> int:
+        """Mencatat insiden anomali baru dari Watchdog."""
+        now = time.time()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO incidents (alert_type, severity, details, status, created_at)
+                VALUES (?, ?, ?, 'OPEN', ?)
+                """,
+                (alert_type, severity, details, now),
+            )
+            return int(cur.lastrowid)
+
+    def resolve_incident(self, incident_id: int, notes: str = "") -> None:
+        """Menandai insiden telah diselesaikan oleh CTO atau auto-remediation."""
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE incidents
+                SET status = 'RESOLVED', resolved_at = ?, resolution_notes = ?
+                WHERE id = ?
+                """,
+                (now, notes, incident_id),
+            )
+
+    def get_open_incidents(self) -> List[Dict[str, Any]]:
+        """Mengambil seluruh insiden yang belum terselesaikan."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM incidents WHERE status = 'OPEN' ORDER BY id DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_recent_incidents(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """Mengambil riwayat insiden terbaru."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM incidents ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_last_incident_by_type(self, alert_type: str) -> Optional[Dict[str, Any]]:
+        """Mengambil insiden terakhir untuk alert_type tertentu (untuk cooldown check)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM incidents WHERE alert_type = ? ORDER BY id DESC LIMIT 1",
+                (alert_type,),
+            ).fetchone()
+            return dict(row) if row else None
