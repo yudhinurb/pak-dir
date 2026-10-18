@@ -54,6 +54,26 @@
         "edit": false,
         "bash": true
       }
+    },
+    "investigator": {
+      "description": "Systems & DevOps SRE Investigator AI - Melakukan Root Cause Analysis (RCA) cepat dari log error dan crash layanan",
+      "mode": "all",
+      "prompt": "{file:.opencode/agent/investigator.md}",
+      "tools": {
+        "write": false,
+        "edit": false,
+        "bash": true
+      }
+    },
+    "sentinel": {
+      "description": "Autonomous Watchdog & Host Health Monitor AI - Mengawasi denyut nadi RAM, CPU, Disk, Port, dan Layanan Systemd",
+      "mode": "all",
+      "prompt": "{file:.opencode/agent/sentinel.md}",
+      "tools": {
+        "write": false,
+        "edit": false,
+        "bash": true
+      }
     }
   }
 }

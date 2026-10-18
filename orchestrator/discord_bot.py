@@ -8,8 +8,11 @@ from typing import Dict, Any, List, Optional
 
 from orchestrator.agent_factory import AgentFactory
 from orchestrator.llm_router import FreeLLMRouter, FREE_MODEL_POOLS
+from orchestrator.log_investigator import LogInvestigator
+from orchestrator.patch_gatekeeper import PatchGatekeeper
 from orchestrator.state_db import StateDB
 from orchestrator.supervisor import EMSupervisor
+from orchestrator.watchdog import SentinelWatchdog
 from orchestrator.system_context import (
     get_listening_ports,
     get_firewall_status,
@@ -17,6 +20,10 @@ from orchestrator.system_context import (
     get_git_status,
     execute_server_command,
     get_security_audit_report,
+    get_top_processes_by_ram,
+    get_service_journal_logs,
+    restart_system_service,
+    clean_system_caches,
 )
 from orchestrator.file_processor import (
     process_single_attachment,
@@ -155,6 +162,41 @@ class CTOCommandHandler:
             router=self.router,
             factory=self.factory,
         )
+        self.watchdog = SentinelWatchdog(state_db=self.state_db)
+        self.investigator = LogInvestigator(router=self.router, state_db=self.state_db)
+        self.gatekeeper = PatchGatekeeper(root_dir=self.root_dir, state_db=self.state_db, router=self.router)
+
+    def handle_top(self, limit: int = 5) -> str:
+        procs = get_top_processes_by_ram(limit=limit)
+        return f"📊 **Top {limit} Proses Pemakan RAM di Host:**\n```\n{procs}\n```"
+
+    def handle_logs(self, service_name: str, lines: int = 40) -> str:
+        logs = get_service_journal_logs(service_name, lines=lines)
+        return f"📜 **Log Terakhir Layanan `{service_name}` ({lines} baris):**\n```\n{logs[-3500:]}\n```"
+
+    def handle_investigate_service(self, service_name: str, lines: int = 50) -> str:
+        res = self.investigator.investigate_service(service_name, lines=lines)
+        return (
+            f"🔍 **Laporan Investigasi Sistem — Layanan `{res['service']}`** *(Model: `{res['model']}`)*\n\n"
+            f"{res['analysis']}"
+        )
+
+    def handle_investigate_log(self, log_content: str, label: str = "Uploaded Log") -> str:
+        res = self.investigator.investigate_log_text(log_content, source_label=label)
+        return (
+            f"🔍 **Laporan Investigasi Log — `{res['source']}`** *(Model: `{res['model']}`)*\n\n"
+            f"{res['analysis']}"
+        )
+
+    def handle_restart(self, service_name: str) -> str:
+        code, out = restart_system_service(service_name)
+        return out
+
+    def handle_clean(self) -> str:
+        return clean_system_caches(self.state_db.db_path)
+
+    def handle_hotfix(self, instruction: str, progress_callback: Optional[Any] = None) -> Dict[str, Any]:
+        return self.gatekeeper.prepare_hotfix(instruction, progress_callback=progress_callback)
 
     def handle_agents_list(self) -> str:
         agents = self.factory.list_agents()
@@ -212,8 +254,23 @@ class CTOCommandHandler:
         active_tasks = self.state_db.get_active_tasks()
         recent_tasks = self.state_db.get_recent_tasks(limit=5)
         recent_events = self.state_db.get_recent_agent_events(limit=1)
+        open_incidents = self.state_db.get_open_incidents()
+        mem_metrics = self.watchdog.get_memory_metrics()
 
-        lines = ["📊 **STATUS REAL-TIME TIM AI & TUGAS (PakDir Orchestrator)**\n"]
+        lines = ["📊 **STATUS REAL-TIME HOST & TIM SENTINEL (PakDir v2)**\n"]
+
+        if mem_metrics.get("ram_total_mb", 0) > 0:
+            lines.append(
+                f"🖥️ **Host RAM:** {mem_metrics['ram_used_mb']} MB / {mem_metrics['ram_total_mb']} MB ({mem_metrics['ram_percent']}%) | "
+                f"**Swap:** {mem_metrics['swap_percent']}%\n"
+            )
+
+        if open_incidents:
+            lines.append(f"🚨 **Peringatan Sentinel Aktif ({len(open_incidents)} Insiden):**")
+            for inc in open_incidents[:3]:
+                first_line = inc['details'].splitlines()[0] if inc.get('details') else inc['alert_type']
+                lines.append(f"• `[{inc['severity']}]` **{inc['alert_type']}**: {first_line[:90]}")
+            lines.append("")
 
         if active_tasks:
             lines.append("⚡ **Tugas Sedang Berjalan / Menunggu Tindakan:**")
@@ -323,7 +380,7 @@ def run_discord_bot() -> None:
     """
     try:
         import discord
-        from discord.ext import commands
+        from discord.ext import commands, tasks
         from dotenv import load_dotenv
     except ImportError as exc:
         raise RuntimeError(
@@ -340,9 +397,38 @@ def run_discord_bot() -> None:
     bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
     handler = CTOCommandHandler(".")
 
+    @tasks.loop(minutes=5)
+    async def watchdog_heartbeat() -> None:
+        """Pemeriksaan berkala otomatis oleh Anjing Penjaga (Watchdog Sentinel)."""
+        try:
+            alerts = await asyncio.to_thread(handler.watchdog.inspect_system)
+            if alerts:
+                # Cari text channel yang dapat dikirimi pesan
+                target_channel = None
+                for guild in bot.guilds:
+                    for ch in guild.text_channels:
+                        if ch.permissions_for(guild.me).send_messages:
+                            target_channel = ch
+                            break
+                    if target_channel:
+                        break
+
+                if target_channel:
+                    for alt in alerts:
+                        msg = (
+                            f"🚨 **[WATCHDOG SENTINEL ALERT]** {alt['title']}\n"
+                            f"• **Tingkat Bahaya:** `{alt['severity']}`\n\n"
+                            f"{alt['details']}"
+                        )
+                        await send_split_message(target_channel, msg)
+        except Exception as exc:
+            print(f"[Watchdog Loop Exception] {exc}", flush=True)
+
     @bot.event
     async def on_ready() -> None:
-        print(f"[CTO Orchestrator] Online sebagai {bot.user} | Siap melayani CTO!", flush=True)
+        print(f"[CTO Sentinel v2] Online sebagai {bot.user} | Anjing Penjaga Siap Melayani CTO!", flush=True)
+        if not watchdog_heartbeat.is_running():
+            watchdog_heartbeat.start()
 
     @bot.event
     async def on_command_error(ctx: Any, error: Any) -> None:
@@ -365,33 +451,35 @@ def run_discord_bot() -> None:
 
     @bot.command(name="help", aliases=["commands", "menu", "bantuan"])
     async def cmd_help(ctx: Any) -> None:
-        """Menampilkan panduan lengkap perintah Ruang Kantor Virtual CTO."""
+        """Menampilkan panduan lengkap perintah Ruang Kantor Virtual CTO & Anjing Penjaga."""
         menu = (
-            "🏛️ **KANTOR VIRTUAL CTO — DAFTAR PERINTAH RESMI (PakDir)**\n"
+            "🏛️ **PAKDIR v2 — SENTINEL & CTO CONTROL PLANE DAFTAR PERINTAH**\n"
             "Gunakan prefix `!` di awal setiap perintah.\n\n"
-            "**1. Konsultasi & Manajemen Tim AI**\n"
-            "• `!ask <@agent> [pertanyaan]` : Tanya/konsultasi langsung ke engineer AI.\n"
-            "  *(Mendukung lampiran berkas .pdf, .txt, .md, .py, .json, .sql, .log untuk dianalisis)*\n"
-            "  *Contoh:* `!ask architect port apa aja yang terekspos di server?`\n"
-            "• `!agents` : Tampilkan daftar seluruh karyawan AI aktif, peran, dan toolsnya.\n"
-            "• `!hire <nama> <deskripsi dan SOP>` : Merekrut karyawan AI spesialis baru secara instan.\n"
-            "• `!specialize <@agent> <fokus>` : Memperdalam/memperbarui SOP karyawan AI.\n\n"
-            "**2. Eksekusi Mandat, Observabilitas & Persetujuan Produksi**\n"
-            "• `!task [instruksi]` : Jalankan sprint otomatis end-to-end (PM ➔ Architect ➔ Dev ➔ Ops ➔ Auto-Healing).\n"
-            "• `!status` (atau `!tasks`) : Pantau status real-time agen, task aktif, stage saat ini, dan antrean.\n"
-            "• `!activity` (atau `!events` / `!log`) : Lihat 10 riwayat aktivitas dan timeline agen terkini.\n"
-            "• `!taskinfo <task_id>` : Periksa bukti hasil kerja lengkap (@pm PRD, @architect desain, @dev kode, @ops QA).\n"
-            "• `!pending` : Lihat daftar task/PR yang menunggu persetujuan (approval) CTO.\n"
-            "• `!approve <task_id> [catatan]` : Otorisasi deploy & merge kode ke branch `main` dengan bukti commit Git.\n"
-            "• `!reject <task_id> <alasan>` : Tolak task dan simpan catatan revisi.\n"
-            "• `!retry <task_id> [catatan]` (atau `!resume`) : Memicu kembali tim AI untuk melanjutkan/merevisi task yang berhenti atau ditolak.\n\n"
-            "**3. Telemetri & Kontrol Server Host (DevOps)**\n"
-            "• `!health` : Dashboard kesehatan sistem (RAM, Swap, Disk, Layanan Inti, Git).\n"
+            "**1. 🐕 Pemantauan Host & Anjing Penjaga (SysAdmin)**\n"
+            "• `!status` : Dashboard real-time kesehatan host, alert aktif, dan sprint/task.\n"
+            "• `!top [limit]` : Tampilkan proses pemakan RAM terbesar di server (default 5).\n"
+            "• `!logs <service> [lines]` : Baca log journalctl service systemd (misal: `!logs caddy 30`).\n"
+            "• `!investigate <service|issue>` : Investigasi akar masalah (RCA) service atau error log terlampir.\n"
+            "• `!restart <service>` : Restart aman layanan systemd dengan verifikasi otomatis pasca-restart.\n"
+            "• `!clean` : Bersihkan journald log usang, temporary files, dan kompaksi database.\n"
+            "• `!health` : Dashboard kesehatan sistem (RAM, Swap, Disk, Layanan, Git).\n"
             "• `!security` (atau `!sec`) : Audit keamanan server & status password portal arsitektur (Port 8080).\n"
             "• `!ports` : Cek port aktif/listening (`ss -tuln`) dan status firewall UFW.\n"
-            "• `!exec <command>` : Jalankan perintah shell langsung di host Linux dari Discord.\n"
-            "  *Contoh:* `!exec git log -3 --oneline` atau `!exec df -h`\n"
-            "• `!help` (atau `!menu`) : Tampilkan panduan menu ini."
+            "• `!exec <command>` : Jalankan perintah shell langsung di host Linux dari Discord.\n\n"
+            "**2. 🛡️ Safe Hotfix & Delivery Gatekeeper**\n"
+            "• `!hotfix <instruksi>` : Buat branch hotfix, aplikasikan patch terarah, dan siapkan approval.\n"
+            "• `!task [instruksi]` : Jalankan sprint fitur end-to-end terisolasi.\n"
+            "• `!pending` : Lihat daftar rilis/hotfix yang menunggu persetujuan (approval) CTO.\n"
+            "• `!approve <task_id> [catatan]` : Otorisasi deploy & merge kode ke branch `main`.\n"
+            "• `!reject <task_id> <alasan>` : Tolak task/hotfix dan simpan catatan revisi.\n"
+            "• `!retry <task_id> [catatan]` : Lanjutkan atau revisi task/hotfix.\n"
+            "• `!taskinfo <task_id>` : Periksa bukti hasil kerja dan deliverable lengkap.\n\n"
+            "**3. 💬 Konsultasi & Manajemen Tim AI**\n"
+            "• `!ask <@agent> [pertanyaan]` : Tanya/konsultasi langsung ke engineer AI.\n"
+            "  *(Mendukung lampiran berkas .pdf, .txt, .md, .py, .json, .sql, .log)*\n"
+            "• `!agents` : Tampilkan daftar seluruh karyawan AI aktif, peran, dan toolsnya.\n"
+            "• `!hire <nama> <deskripsi dan SOP>` : Merekrut spesialis baru secara instan.\n"
+            "• `!specialize <@agent> <fokus>` : Memperdalam/memperbarui SOP karyawan AI."
         )
         await send_split_message(ctx, menu)
 
@@ -427,6 +515,94 @@ def run_discord_bot() -> None:
         out = await asyncio.to_thread(execute_server_command, clean_cmd)
         msg = f"💻 **Hasil Eksekusi `{display_cmd}`**:\n```bash\n{out}\n```"
         await send_split_message(ctx, msg)
+
+    @bot.command(name="top")
+    async def cmd_top(ctx: Any, limit: int = 5) -> None:
+        """Melihat proses pemakan RAM terbesar di server."""
+        lim = max(1, min(limit, 20))
+        report = await asyncio.to_thread(handler.handle_top, lim)
+        await send_split_message(ctx, report)
+
+    @bot.command(name="logs")
+    async def cmd_logs(ctx: Any, service_name: str, lines: int = 40) -> None:
+        """Melihat log journalctl dari suatu service systemd."""
+        cnt = max(10, min(lines, 200))
+        report = await asyncio.to_thread(handler.handle_logs, service_name, cnt)
+        await send_split_message(ctx, report)
+
+    @bot.command(name="investigate", aliases=["triage", "rca", "diagnose"])
+    async def cmd_investigate(ctx: Any, target_or_svc: Optional[str] = None) -> None:
+        """Melakukan Root Cause Analysis (RCA) mendalam dari service atau file log terlampir."""
+        uploads_dir = handler.root_dir / "data" / "uploads"
+        attachments_context = ""
+
+        if ctx.message.attachments:
+            processed_items = []
+            for att in ctx.message.attachments:
+                await ctx.send(f"📎 Mengunduh berkas log/diagnostik: `{att.filename}`...")
+                raw_bytes = await att.read()
+                res = await asyncio.to_thread(
+                    process_single_attachment,
+                    att.filename,
+                    raw_bytes,
+                    uploads_dir,
+                )
+                processed_items.append(res)
+            attachments_context = format_attachments_context(processed_items)
+
+        if attachments_context:
+            await ctx.send("🔍 **[@investigator]** Membaca berkas log terlampir dan menganalisis akar masalah...")
+            report = await asyncio.to_thread(
+                handler.handle_investigate_log,
+                attachments_context,
+                f"Attachment ({ctx.message.attachments[0].filename})",
+            )
+            await send_split_message(ctx, report)
+            return
+
+        target = (target_or_svc or "").strip()
+        if not target:
+            await ctx.send("⚠️ Masukkan nama service yang ingin diinvestigasi atau lampirkan berkas log. Contoh: `!investigate caddy`")
+            return
+
+        await ctx.send(f"🔍 **[@investigator]** Mengambil log journalctl untuk `{target}` dan melakukan RCA...")
+        try:
+            report = await asyncio.to_thread(handler.handle_investigate_service, target, 50)
+            await send_split_message(ctx, report)
+        except Exception as e:
+            await send_split_message(ctx, f"⚠️ Gagal melakukan investigasi: {e}")
+
+    @bot.command(name="restart")
+    async def cmd_restart(ctx: Any, service_name: str) -> None:
+        """Me-restart layanan systemd secara aman."""
+        await ctx.send(f"⚙️ Me-restart layanan systemd: `{service_name}`...")
+        res = await asyncio.to_thread(handler.handle_restart, service_name)
+        await send_split_message(ctx, res)
+
+    @bot.command(name="clean")
+    async def cmd_clean(ctx: Any) -> None:
+        """Membersihkan log journal usang, temporary uploads, dan kompaksi database."""
+        await ctx.send("🧹 Membersihkan berkas sementara, journalctl lama, dan mengompresi database...")
+        res = await asyncio.to_thread(handler.handle_clean)
+        await send_split_message(ctx, res)
+
+    @bot.command(name="hotfix")
+    async def cmd_hotfix(ctx: Any, *, instruction: str) -> None:
+        """Membuat branch hotfix, menerapkan perbaikan terarah, dan menyiapkan approval gate."""
+        if not instruction.strip():
+            await ctx.send("⚠️ Sertakan deskripsi hotfix. Contoh: `!hotfix ubah port timeout caddy ke 60 detik`")
+            return
+
+        loop = asyncio.get_running_loop()
+
+        def send_progress(msg: str) -> None:
+            asyncio.run_coroutine_threadsafe(send_split_message(ctx, msg), loop)
+
+        try:
+            await asyncio.to_thread(handler.handle_hotfix, instruction, send_progress)
+        except Exception as exc:
+            err_msg = f"⚠️ Eksekusi hotfix gagal:\n```{str(exc)[:1500]}```"
+            await send_split_message(ctx, err_msg)
 
     @bot.command(name="agents")
     async def cmd_agents(ctx: Any) -> None:

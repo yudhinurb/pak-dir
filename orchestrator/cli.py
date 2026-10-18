@@ -56,6 +56,36 @@ def interactive_repl() -> None:
 
         if cmd == "!agents":
             print(handler.handle_agents_list())
+        elif cmd == "!status":
+            print(handler.handle_status())
+        elif cmd == "!top":
+            lim = int(args) if args.isdigit() else 5
+            print(handler.handle_top(lim))
+        elif cmd == "!logs":
+            parts = args.split()
+            svc = parts[0] if parts else "caddy"
+            cnt = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 40
+            print(handler.handle_logs(svc, cnt))
+        elif cmd == "!investigate":
+            if not args:
+                print("Format: !investigate <nama_service>")
+                continue
+            print(f"🔍 Menginvestigasi service {args}...")
+            print(handler.handle_investigate_service(args))
+        elif cmd == "!restart":
+            if not args:
+                print("Format: !restart <nama_service>")
+                continue
+            print(handler.handle_restart(args))
+        elif cmd == "!clean":
+            print(handler.handle_clean())
+        elif cmd == "!hotfix":
+            if not args:
+                print("Format: !hotfix <deskripsi perbaikan>")
+                continue
+            print("🛡️ Menyiapkan hotfix terarah...")
+            res = handler.handle_hotfix(args, progress_callback=print)
+            print(f"\nStatus Hotfix #{res.get('id')}: {res.get('status')}")
         elif cmd == "!health":
             print(get_server_health_report())
         elif cmd == "!pending":
