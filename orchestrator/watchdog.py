@@ -172,6 +172,19 @@ class SentinelWatchdog:
 
         for svc in self.monitored_services:
             try:
+                # 1. Verifikasi apakah service memang terpasang di sistem (bukan uninstalled/not-found)
+                check_exist = subprocess.run(
+                    ["systemctl", "status", svc],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                exist_out = (check_exist.stdout or "") + (check_exist.stderr or "")
+                if "could not be found" in exist_out.lower() or "not-found" in exist_out.lower():
+                    # Layanan belum terpasang di VPS (misal belum install Docker/Postgres), abaikan
+                    continue
+
+                # 2. Cek status keaktifan layanan
                 res = subprocess.run(
                     ["systemctl", "is-active", svc],
                     capture_output=True,
