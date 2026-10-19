@@ -468,7 +468,6 @@ def run_discord_bot() -> None:
             "• `!exec <command>` : Jalankan perintah shell langsung di host Linux dari Discord.\n\n"
             "**2. 🛡️ Safe Hotfix & Delivery Gatekeeper**\n"
             "• `!hotfix <instruksi>` : Buat branch hotfix, aplikasikan patch terarah, dan siapkan approval.\n"
-            "• `!task [instruksi]` : Jalankan sprint fitur end-to-end terisolasi.\n"
             "• `!pending` : Lihat daftar rilis/hotfix yang menunggu persetujuan (approval) CTO.\n"
             "• `!approve <task_id> [catatan]` : Otorisasi deploy & merge kode ke branch `main`.\n"
             "• `!reject <task_id> <alasan>` : Tolak task/hotfix dan simpan catatan revisi.\n"
@@ -670,49 +669,6 @@ def run_discord_bot() -> None:
     async def cmd_specialize(ctx: Any, name: str, *, focus: str) -> None:
         reply = await asyncio.to_thread(handler.handle_specialize, name.lstrip("@"), focus)
         await send_split_message(ctx, reply)
-
-    @bot.command(name="task")
-    async def cmd_task(ctx: Any, *, instruction: Optional[str] = None) -> None:
-        uploads_dir = handler.root_dir / "data" / "uploads"
-
-        # 1. Unduh dan proses jika ada lampiran file mandat/spesifikasi
-        attachments_context = ""
-        if ctx.message.attachments:
-            processed_items = []
-            for att in ctx.message.attachments:
-                await ctx.send(f"📎 Mengunduh dokumen mandat: `{att.filename}` ({att.size / 1024:.1f} KB)...")
-                raw_bytes = await att.read()
-                res = await asyncio.to_thread(
-                    process_single_attachment,
-                    att.filename,
-                    raw_bytes,
-                    uploads_dir,
-                )
-                processed_items.append(res)
-            attachments_context = format_attachments_context(processed_items)
-
-        task_instruction = (instruction or "").strip()
-        if not task_instruction:
-            if attachments_context:
-                task_instruction = "Implementasikan fitur dan rancangan sistem sesuai dokumen spesifikasi terlampir."
-            else:
-                await ctx.send("⚠️ Silakan sertakan instruksi atau lampirkan dokumen spesifikasi tugas. Contoh: `!task Buat endpoint /api/health`")
-                return
-
-        final_instruction = f"{task_instruction}\n\n{attachments_context}" if attachments_context else task_instruction
-
-        loop = asyncio.get_running_loop()
-
-        def send_progress(msg: str) -> None:
-            asyncio.run_coroutine_threadsafe(send_split_message(ctx, msg), loop)
-
-        try:
-            await asyncio.to_thread(handler.supervisor.execute_cto_mandate, final_instruction, send_progress)
-        except Exception as exc:
-            print(f"[Discord Error Task] {exc}", flush=True)
-            err_msg = f"⚠️ Eksekusi task gagal:\n```{str(exc)[:1500]}```"
-            await send_split_message(ctx, err_msg)
-
     @bot.command(name="status", aliases=["tasks", "antrean", "antrian", "progress"])
     async def cmd_status(ctx: Any) -> None:
         """Memeriksa status real-time agen, task aktif, dan antrean."""
@@ -800,7 +756,7 @@ def run_discord_bot() -> None:
         if task_id is None:
             await send_split_message(
                 ctx,
-                "⚠️ Tidak ada task yang ditemukan di sistem. Silakan buat task baru dengan `!task <instruksi>`.",
+                "⚠️ Tidak ada task/hotfix yang ditemukan di sistem. Silakan buat perbaikan baru dengan `!hotfix <instruksi>`.",
             )
             return
 

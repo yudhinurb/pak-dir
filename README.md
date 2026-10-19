@@ -11,7 +11,7 @@
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python Version"></a>
   <a href="#resource-aware-architecture"><img src="https://img.shields.io/badge/control%20plane%20overhead-%3C150MB-success" alt="RAM Overhead"></a>
   <a href="#llm-router"><img src="https://img.shields.io/badge/token%20cost-%240%20(multi--provider%20free)-brightgreen" alt="Token Cost"></a>
-  <a href="#test-suite"><img src="https://img.shields.io/badge/tests-38%20passed-brightgreen" alt="Test Suite"></a>
+  <a href="#test-suite"><img src="https://img.shields.io/badge/tests-39%20passed-brightgreen" alt="Test Suite"></a>
 </p>
 
 ---
@@ -70,7 +70,7 @@ Send files directly through Discord chat for immediate processing ([`orchestrato
   - **Documents:** `.pdf` (digital PDF extraction via lightweight `pypdf`, memory overhead < 15 MB).
   - **Code & Text:** `.txt`, `.md`, `.py`, `.json`, `.yaml`, `.yml`, `.sql`, `.csv`, `.log`, `.sh`, `.html`, `.css`, `.toml`, `.go`, `.rs`.
 - **Automatic Archival:** Stored safely with timestamp prefixes in `data/uploads/`.
-- **Integration:** Supported across both `!ask <@agent>` (for reviews and analysis) and `!task` (for PRD-driven sprints).
+- **Integration:** Supported across `!ask <@agent>` (for code reviews and log analysis) and `!hotfix` (for targeted patch directives).
 
 ### 5. 🔒 Hardened Architecture Portal & Defense-in-Depth
 Protect your architectural blueprints, ERDs, and PRDs from public scraping on Port 8080:
@@ -132,7 +132,7 @@ pip install -r orchestrator/requirements.txt
 ```bash
 python -m unittest discover tests
 ```
-*(Runs 17 automated unit tests covering orchestrator, real git branching/merges, observability, rate-limit failovers, file processing, and security hardening).*
+*(Runs 39 automated unit tests covering Sentinel Watchdog, incident RCA diagnosis, safe patch gatekeeper, real git branching/merges, observability, rate-limit failovers, file processing, and security hardening).*
 
 ### 3. Configure Credentials
 

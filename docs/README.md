@@ -14,7 +14,9 @@ Seluruh halaman dan diagram di portal ini diperbarui secara otomatis oleh **`@ar
 | **Alokasi Workload Produk** | **Mayoritas Sumber Daya Host** | **Jatah penuh untuk aplikasi teknologi yang sedang dibangun** |
 
 ## Cara Cepat CTO Berinteraksi (Via Discord)
-- `!task <instruksi>` — Menugaskan `@em` untuk mengevaluasi tim, merekrut agen spesialis jika perlu, dan mengeksekusi `PM -> Architect -> Dev -> Ops`.
+- `!status` — Dashboard real-time kesehatan host, alert aktif Sentinel, dan antrean task.
+- `!hotfix <instruksi>` — Menugaskan perbaikan file spesifik dengan validasi sintaks terisolasi dan antrean approval deploy ke branch `main`.
+- `!investigate <service|issue>` — Analisis akar masalah service bermasalah atau log error via LLM.
 - `!ask <nama_agent> <pertanyaan>` — Bertanya langsung ke karyawan AI mana pun (contoh: `!ask architect jelaskan skema autentikasi saat ini`).
 - `!agents` — Melihat daftar karyawan AI aktif saat ini.
 - `!hire <nama> <instruksi>` — Melahirkan agen spesialis baru secara instan.

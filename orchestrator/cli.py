@@ -36,14 +36,19 @@ def interactive_repl() -> None:
         if line.lower() in ("help", "?"):
             print(
                 "\nPerintah yang Tersedia:\n"
-                "  !agents                 - Tampilkan daftar karyawan AI aktif\n"
-                "  !status                 - Cek status real-time agen dan task aktif\n"
-                "  !ask <agent> <tanya>    - Tanya langsung ke agen tertentu (misal: !ask architect ...)\n"
-                "  !task <instruksi>       - Berikan inisiatif fitur ke @em (Full Pipeline)\n"
+                "  !status                 - Dashboard real-time host, alert, dan task\n"
+                "  !top [n]                - Tampilkan N proses pemakan RAM terbesar\n"
+                "  !logs [service] [n]     - Intip N baris log systemd terbaru\n"
+                "  !investigate <service>  - Investigasi akar masalah service error (AI)\n"
+                "  !restart <service>      - Restart service systemd di host\n"
+                "  !clean                  - Bersihkan cache RAM & journald\n"
+                "  !hotfix <instruksi>     - Minta tim engineering perbaiki file spesifik (Safe Patch)\n"
                 "  !pending                - Lihat daftar task yang menunggu approval CTO\n"
                 "  !approve <id> [catatan] - Setujui deployment task\n"
                 "  !reject <id> <alasan>   - Tolak task & minta revisi\n"
                 "  !retry [id] [catatan]   - Lanjutkan atau revisi task yang berhenti/ditolak\n"
+                "  !ask <agent> <tanya>    - Tanya langsung ke agen tertentu (misal: !ask architect ...)\n"
+                "  !agents                 - Tampilkan daftar karyawan AI aktif\n"
                 "  !hire <nama> <sop>      - Rekrut agen spesialis baru\n"
                 "  !specialize <nama> <fokus> - Pertajam SOP agen yang ada\n"
                 "  !health                 - Cek telemetri kesehatan host\n"
@@ -118,13 +123,6 @@ def interactive_repl() -> None:
                 print("Format: !specialize <nama_agent> <fokus_baru>")
                 continue
             print(handler.handle_specialize(parts[0], parts[1]))
-        elif cmd == "!task":
-            if not args:
-                print("Format: !task <instruksi lengkap>")
-                continue
-            print("🚀 Menjalankan inisiatif di bawah pengawasan @em...")
-            res = handler.supervisor.execute_cto_mandate(args, progress_callback=print)
-            print(f"\nStatus Terakhir Task #{res.get('id')}: {res.get('status')}")
         elif cmd == "!approve":
             parts = args.split(maxsplit=1)
             if not parts:
@@ -203,8 +201,8 @@ def main() -> None:
     ask_p.add_argument("agent", help="Nama agen (misal: architect)")
     ask_p.add_argument("question", help="Pertanyaan teknis")
 
-    task_p = sub.add_parser("task", help="Eksekusi inisiatif fitur baru")
-    task_p.add_argument("instruction", help="Instruksi fitur")
+    hotfix_p = sub.add_parser("hotfix", help="Eksekusi hotfix terarah (Safe Patch)")
+    hotfix_p.add_argument("instruction", help="Instruksi perbaikan file spesifik")
 
     app_p = sub.add_parser("approve", help="Approve task")
     app_p.add_argument("task_id", type=int, help="ID Task")
@@ -229,8 +227,9 @@ def main() -> None:
         print(handler.handle_status())
     elif args.subcommand == "ask":
         print(handler.handle_ask(args.agent, args.question))
-    elif args.subcommand == "task":
-        handler.supervisor.execute_cto_mandate(args.instruction, progress_callback=print)
+    elif args.subcommand == "hotfix":
+        res = handler.handle_hotfix(args.instruction, progress_callback=print)
+        print(f"\nStatus Hotfix #{res.get('id')}: {res.get('status')}")
     elif args.subcommand == "approve":
         print(handler.supervisor.approve_task(args.task_id, args.note))
     elif args.subcommand == "retry":
